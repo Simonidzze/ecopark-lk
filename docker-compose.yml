@@ -1,0 +1,13 @@
+services:
+  ecopark-lk:
+    build: .
+    image: ecopark-lk:latest
+    restart: unless-stopped
+    env_file:
+      - env.prod
+    environment:
+      TZ: Asia/Novosibirsk
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./google-service-account.json:/run/secrets/google-service-account.json:ro

@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+.env
+env.prod
+google-service-account.json
+sync.log
+.DS_Store

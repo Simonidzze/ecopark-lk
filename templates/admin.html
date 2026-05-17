@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+
+{% block title %}Обзор - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <form method="post" action="{{ url_for('sync_now') }}">
+    <button class="button" type="submit">Запустить синхронизацию</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="messages">
+        {% for category, message in messages %}
+          <div class="message {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="metrics" aria-label="Итоги">
+    <div class="metric">
+      <div class="label">Задолженность</div>
+      <div class="value">{{ "%.2f"|format(totals.debt) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Переплата</div>
+      <div class="value">{{ "%.2f"|format(totals.overpayment) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Платежи</div>
+      <div class="value">{{ "%.2f"|format(totals.payments) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Начисления</div>
+      <div class="value">{{ "%.2f"|format(totals.accruals) }}</div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <section class="section">
+      <div class="section-head">
+        <h2>Таблицы</h2>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Данные</th>
+            <th>Строк</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in counts %}
+            <tr>
+              <td>{{ item.label }}</td>
+              <td>{{ item.count }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Последние запуски</h2>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Старт</th>
+            <th>Финиш</th>
+            <th>Статус</th>
+            <th>Ошибка</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+            <tr>
+              <td>{{ run.id }}</td>
+              <td>{{ run.started_at or "" }}</td>
+              <td>{{ run.finished_at or "" }}</td>
+              <td><span class="status {{ run.status }}">{{ run.status }}</span></td>
+              <td class="muted">{{ run.error_text or "" }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="muted">Запусков пока нет</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+{% endblock %}

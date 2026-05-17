@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}Участок {{ details.plot_number if details else "" }} - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button" href="{{ url_for('debts') }}">К участкам</a>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  {% if details %}
+    <section class="metrics" aria-label="Остатки">
+      <div class="metric">
+        <div class="label">Участок</div>
+        <div class="value">{{ details.plot_number }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">ЛС</div>
+        <div class="value">{{ details.account }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Задолженность</div>
+        <div class="value">{{ "%.2f"|format(details.debt or 0) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Итого</div>
+        <div class="value">{{ "%.2f"|format(details.total or 0) }}</div>
+      </div>
+    </section>
+
+    <section class="section" style="margin-bottom: 16px;">
+      <div class="section-head">
+        <h2>{{ details.owner }}</h2>
+        <span class="muted">{{ details.phone or "телефон не указан" }}</span>
+      </div>
+      <table>
+        <tbody>
+          <tr>
+            <th>Пени</th>
+            <td class="num">{{ "%.2f"|format(details.penalty or 0) }}</td>
+            <th>Переплата</th>
+            <td class="num">{{ "%.2f"|format(details.overpayment or 0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="grid grid-even">
+      <section class="section">
+        <div class="section-head">
+          <h2>Платежи</h2>
+          <span class="muted">Строк: {{ payments|length }}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Вид</th>
+              <th class="num">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for payment in payments %}
+              <tr>
+                <td>{{ payment.date or "" }}</td>
+                <td>{{ payment.payment_type }}</td>
+                <td class="num">{{ "%.2f"|format(payment.amount or 0) }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="3" class="muted">Платежей нет</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>Начисления</h2>
+          <span class="muted">Строк: {{ accruals|length }}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th>Взнос</th>
+              <th class="num">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for accrual in accruals %}
+              <tr>
+                <td>{{ accrual.date or "" }}</td>
+                <td>{{ accrual.contribution }}</td>
+                <td class="num">{{ "%.2f"|format(accrual.amount or 0) }}</td>
+              </tr>
+            {% else %}
+              <tr>
+                <td colspan="3" class="muted">Начислений нет</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  {% endif %}
+{% endblock %}

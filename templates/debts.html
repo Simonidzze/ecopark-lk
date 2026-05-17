@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Участки - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <form class="toolbar" method="get" action="{{ url_for('debts') }}">
+    <input class="input" type="search" name="q" value="{{ search }}" placeholder="Участок, ЛС или собственник">
+    <button class="button" type="submit">Найти</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Участки</h2>
+      <span class="muted">Строк: {{ rows|length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Участок</th>
+          <th>ЛС</th>
+          <th>Собственник</th>
+          <th>Телефон</th>
+          <th class="num">Задолженность</th>
+          <th class="num">Пени</th>
+          <th class="num">Переплата</th>
+          <th class="num">Итого</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.plot_number }}</td>
+            <td>{{ row.account }}</td>
+            <td><a href="{{ url_for('plot_detail', owner_plot_id=row.owner_plot_id) }}">{{ row.owner }}</a></td>
+            <td>{{ row.phone or "—" }}</td>
+            <td class="num">{{ "%.2f"|format(row.debt or 0) }}</td>
+            <td class="num">{{ "%.2f"|format(row.penalty or 0) }}</td>
+            <td class="num">{{ "%.2f"|format(row.overpayment or 0) }}</td>
+            <td class="num">{{ "%.2f"|format(row.total or 0) }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="8" class="muted">Данных нет</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

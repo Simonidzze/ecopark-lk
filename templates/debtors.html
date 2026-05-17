@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+
+{% block title %}Должники - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <form class="toolbar" method="get" action="{{ url_for('debtors') }}">
+    <label class="muted" for="months">Долг больше месяцев</label>
+    <input class="input" id="months" type="number" name="months" value="{{ min_months }}" min="0" step="0.5">
+    <button class="button" type="submit">Показать</button>
+    <button class="button secondary" id="copy-phones" type="button">Скопировать телефоны</button>
+    <a class="button secondary" href="{{ url_for('debtor_phones', months=min_months) }}">Скачать телефоны</a>
+  </form>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="metrics" aria-label="Статистика должников">
+    <div class="metric">
+      <div class="label">Должников</div>
+      <div class="value">{{ stats.count }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Сумма задолженности</div>
+      <div class="value">{{ "%.2f"|format(stats.total_debt or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Телефонов</div>
+      <div class="value">{{ phones|length }}</div>
+    </div>
+  </section>
+
+  <textarea id="phones-text" hidden>{{ phone_text }}</textarea>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Должники</h2>
+      <span class="muted">Строк: {{ rows|length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>ФИО</th>
+          <th>Участки</th>
+          <th class="num">Задолженность</th>
+          <th class="num">Среднее начисление</th>
+          <th class="num">Месяцев долга</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.owner }}</td>
+            <td>
+              {% for plot in row.plots %}
+                <a href="{{ url_for('plot_detail', owner_plot_id=plot.owner_plot_id) }}">{{ plot.plot_number }}</a>{% if not loop.last %}, {% endif %}
+              {% endfor %}
+            </td>
+            <td class="num">{{ "%.2f"|format(row.total_debt or 0) }}</td>
+            <td class="num">{{ "%.2f"|format(row.monthly_accrual or 0) }}</td>
+            <td class="num">{{ "%.1f"|format(row.debt_months or 0) }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="5" class="muted">Подходящих должников нет</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const copyButton = document.getElementById("copy-phones");
+    const phonesText = document.getElementById("phones-text");
+
+    copyButton?.addEventListener("click", async () => {
+      const text = phonesText?.value || "";
+      if (!text.trim()) {
+        copyButton.textContent = "Телефонов нет";
+        return;
+      }
+
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch (_error) {
+        phonesText.hidden = false;
+        phonesText.select();
+        document.execCommand("copy");
+        phonesText.hidden = true;
+      }
+
+      copyButton.textContent = "Скопировано";
+      setTimeout(() => {
+        copyButton.textContent = "Скопировать телефоны";
+      }, 1800);
+    });
+  </script>
+{% endblock %}
