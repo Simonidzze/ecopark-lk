@@ -4,11 +4,13 @@
 
 {% block actions %}
   <form class="toolbar" method="get" action="{{ url_for('debtors') }}">
-    <label class="muted" for="months">Долг больше месяцев</label>
-    <input class="input" id="months" type="number" name="months" value="{{ min_months }}" min="0" step="0.5">
+    <label class="muted" for="months_from">Месяцев долга от</label>
+    <input class="input" id="months_from" type="number" name="months_from" value="{{ min_months }}" min="0" step="0.5">
+    <label class="muted" for="months_to">до</label>
+    <input class="input" id="months_to" type="number" name="months_to" value="{{ max_months }}" min="0" step="0.5">
     <button class="button" type="submit">Показать</button>
     <button class="button secondary" id="copy-phones" type="button">Скопировать телефоны</button>
-    <a class="button secondary" href="{{ url_for('debtor_phones', months=min_months) }}">Скачать телефоны</a>
+    <a class="button secondary" href="{{ url_for('debtor_phones', months_from=min_months, months_to=max_months) }}">Скачать телефоны</a>
   </form>
 {% endblock %}
 

@@ -278,6 +278,7 @@
           <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">Обзор</a>
           <a href="{{ url_for('debts') }}" class="{% if request.endpoint in ['debts', 'plot_detail'] %}active{% endif %}">Участки</a>
           <a href="{{ url_for('debtors') }}" class="{% if request.endpoint == 'debtors' %}active{% endif %}">Должники</a>
+          <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>
         </nav>
       </div>
       {% block actions %}{% endblock %}

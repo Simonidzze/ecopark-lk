@@ -125,6 +125,17 @@ GOOGLE_SERVICE_ACCOUNT_FILE=/run/secrets/google-service-account.json
 python ecopark_sync.py --env-file env.prod export-sheets
 ```
 
+## Обзвоны
+
+CSV-отчет обзвона можно загрузить в админке на странице `/admin/calls` или через CLI:
+
+```bash
+. .venv/bin/activate
+python ecopark_sync.py --env-file env.prod import-calls /path/to/report.csv
+```
+
+Аналитика сопоставляет телефоны из отчета с текущими владельцами участков и показывает оплаты, которые появились после звонка.
+
 ## Docker Compose
 
 Перед запуском положить реальные настройки в `env.prod`, а JSON-ключ service account в `google-service-account.json`.

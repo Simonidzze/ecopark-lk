@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% block title %}Обзвон {{ campaign.external_id if campaign else "" }} - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button" href="{{ url_for('calls') }}">К обзвонам</a>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  {% if campaign %}
+    <section class="metrics" aria-label="Итоги обзвона">
+      <div class="metric">
+        <div class="label">Звонков</div>
+        <div class="value">{{ stats.attempts or 0 }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Сопоставлено участков</div>
+        <div class="value">{{ stats.matched_owner_plots or 0 }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Оплатили после звонка</div>
+        <div class="value">{{ stats.paid_owner_plots or 0 }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Сумма оплат после</div>
+        <div class="value">{{ "%.2f"|format(stats.payment_sum or 0) }}</div>
+      </div>
+    </section>
+
+    <section class="section" style="margin-bottom: 16px;">
+      <div class="section-head">
+        <h2>{{ campaign.title }}</h2>
+        <span class="muted">{{ campaign.called_at or "" }}</span>
+      </div>
+      <table>
+        <tbody>
+          <tr>
+            <th>Номер обзвона</th>
+            <td>{{ campaign.caller_phone }}</td>
+            <th>Стоимость</th>
+            <td class="num">{{ "%.2f"|format(stats.call_cost or 0) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section" style="margin-bottom: 16px;">
+      <div class="section-head">
+        <h2>Платежи после звонка</h2>
+        <span class="muted">Строк: {{ rows|length }}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Собственник</th>
+            <th>Участок</th>
+            <th>Телефон</th>
+            <th>Звонок</th>
+            <th>Первая оплата</th>
+            <th class="num">Оплат</th>
+            <th class="num">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.owner }}</td>
+              <td><a href="{{ url_for('plot_detail', owner_plot_id=row.owner_plot_id) }}">{{ row.plot_number }}</a></td>
+              <td>{{ row.phone }}</td>
+              <td>{{ row.called_at or "" }}</td>
+              <td>{{ row.first_payment_at or "" }}</td>
+              <td class="num">{{ row.payment_count }}</td>
+              <td class="num">{{ "%.2f"|format(row.payment_sum or 0) }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="7" class="muted">Сопоставленных участков нет</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Несопоставленные телефоны</h2>
+        <span class="muted">Строк: {{ unmatched|length }}</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Телефон</th>
+            <th>Звонок</th>
+            <th class="num">Попыток</th>
+            <th class="num">Длительность</th>
+            <th class="num">Стоимость</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in unmatched %}
+            <tr>
+              <td>{{ row.phone }}</td>
+              <td>{{ row.called_at or "" }}</td>
+              <td class="num">{{ row.attempts }}</td>
+              <td class="num">{{ row.duration }}</td>
+              <td class="num">{{ "%.2f"|format(row.cost or 0) }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="5" class="muted">Все телефоны сопоставлены</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+{% endblock %}

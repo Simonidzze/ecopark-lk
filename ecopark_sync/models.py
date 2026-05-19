@@ -115,6 +115,44 @@ class MessengerBinding(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class CallCampaign(Base):
+    __tablename__ = "call_campaigns"
+    __table_args__ = (
+        Index("idx_call_campaigns_external_id", "external_id"),
+        Index("idx_call_campaigns_called_at", "called_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    external_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    caller_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    called_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    report_created_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    total_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    callbacks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_file: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    imported_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class CallAttempt(Base):
+    __tablename__ = "call_attempts"
+    __table_args__ = (
+        Index("idx_call_attempts_campaign_id", "campaign_id"),
+        Index("idx_call_attempts_phone", "phone_normalized"),
+        Index("idx_call_attempts_called_at", "called_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    campaign_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    phone: Mapped[str] = mapped_column(String(64), nullable=False)
+    phone_normalized: Mapped[str] = mapped_column(String(32), nullable=False)
+    call_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manager_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    called_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    cost: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False, default=0)
+    comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+
 class Payment(Base):
     __tablename__ = "payments"
     __table_args__ = (

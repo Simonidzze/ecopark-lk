@@ -41,6 +41,14 @@ def command_export_sheets(_args):
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def command_import_calls(args):
+    from ecopark_sync.calls import import_call_report
+
+    with open(args.file, "rb") as handle:
+        result = import_call_report(handle, source_file=args.file)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Sync Ecopark 1C snapshot into MySQL")
     parser.add_argument("--env-file", default=".env", help="Path to .env file")
@@ -62,6 +70,10 @@ def build_parser():
 
     export_parser = subparsers.add_parser("export-sheets", help="Export current MySQL data to Google Sheets")
     export_parser.set_defaults(func=command_export_sheets)
+
+    calls_parser = subparsers.add_parser("import-calls", help="Import call campaign CSV report")
+    calls_parser.add_argument("file", help="CSV report file")
+    calls_parser.set_defaults(func=command_import_calls)
 
     return parser
 

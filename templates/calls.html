@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+
+{% block title %}Обзвоны - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <form class="toolbar" method="post" action="{{ url_for('import_calls') }}" enctype="multipart/form-data">
+    <input class="input" type="file" name="report" accept=".csv,text/csv">
+    <button class="button" type="submit">Загрузить отчет</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="messages">
+        {% for category, message in messages %}
+          <div class="message {{ category }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Обзвоны</h2>
+      <span class="muted">Кампаний: {{ campaigns|length }}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Обзвон</th>
+          <th>Дата</th>
+          <th class="num">Звонков</th>
+          <th class="num">Сопоставлено</th>
+          <th class="num">Оплатили</th>
+          <th class="num">Оплаты после</th>
+          <th class="num">Стоимость</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for campaign in campaigns %}
+          {% set stats = summaries.get(campaign.id, {}) %}
+          <tr>
+            <td><a href="{{ url_for('call_detail', campaign_id=campaign.id) }}">{{ campaign.title }}</a></td>
+            <td>{{ campaign.called_at or "" }}</td>
+            <td class="num">{{ stats.attempts or 0 }}</td>
+            <td class="num">{{ stats.matched_owner_plots or 0 }}</td>
+            <td class="num">{{ stats.paid_owner_plots or 0 }}</td>
+            <td class="num">{{ "%.2f"|format(stats.payment_sum or 0) }}</td>
+            <td class="num">{{ "%.2f"|format(stats.call_cost or 0) }}</td>
+          </tr>
+        {% else %}
+          <tr>
+            <td colspan="7" class="muted">Отчетов обзвона пока нет</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}
