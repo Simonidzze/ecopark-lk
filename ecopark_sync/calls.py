@@ -37,6 +37,13 @@ def parse_datetime_value(value):
     value = str(value or "").strip().strip('"')
     if not value:
         return None
+    date_match = re.search(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", value)
+    if date_match:
+        value = date_match.group(0)
+    else:
+        date_match = re.search(r"\d{2}\.\d{2}\.\d{4} \(\d{2}:\d{2}:\d{2}\)", value)
+        if date_match:
+            value = date_match.group(0)
     for fmt in ("%Y-%m-%d %H:%M:%S", "%d.%m.%Y (%H:%M:%S)"):
         try:
             return datetime.strptime(value, fmt)
