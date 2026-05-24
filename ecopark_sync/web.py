@@ -105,12 +105,18 @@ def load_debtors_report(min_months_value, max_months_value=None):
         accrual_rows = session.execute(
             select(Accrual.owner_plot_id, Accrual.date, Accrual.amount)
         ).all()
+        payment_rows = session.execute(
+            select(Payment.owner_plot_id, Payment.date, Payment.amount)
+            .where(Payment.date.is_not(None))
+            .order_by(Payment.date)
+        ).all()
 
     owner_plot_to_owner = {
         row["owner_plot_id"]: row["owner_id"]
         for row in owner_plot_rows
     }
     accruals_by_owner_month = {}
+    last_payment_by_owner = {}
     for owner_plot_id, date, amount in accrual_rows:
         owner_id = owner_plot_to_owner.get(owner_plot_id)
         month = month_key(date)
@@ -121,6 +127,14 @@ def load_debtors_report(min_months_value, max_months_value=None):
             accruals_by_owner_month[owner_id].get(month, Decimal("0"))
             + decimal_value(amount)
         )
+
+    for owner_plot_id, date, amount in payment_rows:
+        owner_id = owner_plot_to_owner.get(owner_plot_id)
+        if not owner_id or date is None:
+            continue
+        current = last_payment_by_owner.get(owner_id)
+        if current is None or date > current["date"]:
+            last_payment_by_owner[owner_id] = {"date": date, "amount": decimal_value(amount)}
 
     debtors_by_owner = {}
     for row in owner_plot_rows:
@@ -138,6 +152,8 @@ def load_debtors_report(min_months_value, max_months_value=None):
                 "total_debt": Decimal("0"),
                 "monthly_accrual": Decimal("0"),
                 "debt_months": None,
+                "last_payment_date": None,
+                "last_payment_amount": Decimal("0"),
             },
         )
         debtor["plots"].append(
@@ -153,6 +169,11 @@ def load_debtors_report(min_months_value, max_months_value=None):
         debtor["total_debt"] += debt_total
 
     for owner_id, debtor in debtors_by_owner.items():
+        last_payment = last_payment_by_owner.get(owner_id)
+        if last_payment is not None:
+            debtor["last_payment_date"] = last_payment["date"]
+            debtor["last_payment_amount"] = last_payment["amount"]
+
         monthly_values = [
             amount
             for amount in accruals_by_owner_month.get(owner_id, {}).values()

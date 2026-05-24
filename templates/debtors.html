@@ -49,6 +49,8 @@
           <th class="num">Задолженность</th>
           <th class="num">Среднее начисление</th>
           <th class="num">Месяцев долга</th>
+          <th>Последний платеж</th>
+          <th class="num">Сумма платежа</th>
         </tr>
       </thead>
       <tbody>
@@ -63,10 +65,12 @@
             <td class="num">{{ "%.2f"|format(row.total_debt or 0) }}</td>
             <td class="num">{{ "%.2f"|format(row.monthly_accrual or 0) }}</td>
             <td class="num">{{ "%.1f"|format(row.debt_months or 0) }}</td>
+            <td>{{ row.last_payment_date or "" }}</td>
+            <td class="num">{{ "%.2f"|format(row.last_payment_amount or 0) }}</td>
           </tr>
         {% else %}
           <tr>
-            <td colspan="5" class="muted">Подходящих должников нет</td>
+            <td colspan="7" class="muted">Подходящих должников нет</td>
           </tr>
         {% endfor %}
       </tbody>
