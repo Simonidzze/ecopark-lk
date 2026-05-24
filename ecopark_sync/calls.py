@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 import re
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from .db import make_session_factory
 from .models import CallAttempt, CallCampaign
@@ -135,22 +135,131 @@ def import_call_report(file_obj, source_file=""):
     imported_at = now_utc_naive()
 
     with Session() as session:
-        campaign = session.scalar(
-            select(CallCampaign).where(CallCampaign.external_id == campaign_data["external_id"])
-        )
+        campaign = find_campaign_for_import(session, campaign_data)
         if campaign is None:
             campaign = CallCampaign(**campaign_data, imported_at=imported_at)
             session.add(campaign)
             session.flush()
         else:
-            for key, value in campaign_data.items():
-                setattr(campaign, key, value)
+            campaign.title = campaign.title or campaign_data["title"]
+            campaign.caller_phone = campaign.caller_phone or campaign_data["caller_phone"]
+            campaign.called_at = campaign.called_at or campaign_data["called_at"]
+            campaign.report_created_at = campaign_data["report_created_at"] or campaign.report_created_at
+            campaign.callbacks = max(campaign.callbacks or 0, campaign_data["callbacks"] or 0)
+            campaign.source_file = append_source_file(campaign.source_file, source_file)
             campaign.imported_at = imported_at
             session.flush()
 
-        session.execute(delete(CallAttempt).where(CallAttempt.campaign_id == campaign.id))
+        if source_file:
+            session.execute(
+                delete(CallAttempt)
+                .where(CallAttempt.campaign_id == campaign.id)
+                .where(CallAttempt.source_file == source_file)
+            )
         for attempt in attempts:
-            session.add(CallAttempt(campaign_id=campaign.id, **attempt))
+            session.add(CallAttempt(campaign_id=campaign.id, source_file=source_file, **attempt))
+        session.flush()
+
+        collapse_campaign_attempts(session, campaign)
 
         session.commit()
         return {"campaign_id": campaign.id, "external_id": campaign.external_id, "attempts": len(attempts)}
+
+
+def find_campaign_for_import(session, campaign_data):
+    called_at = campaign_data.get("called_at")
+    if called_at is not None:
+        campaign = session.scalar(
+            select(CallCampaign)
+            .where(func.date(CallCampaign.called_at) == called_at.date().isoformat())
+            .order_by(CallCampaign.id)
+        )
+        if campaign is not None:
+            return campaign
+
+    return session.scalar(
+        select(CallCampaign).where(CallCampaign.external_id == campaign_data["external_id"])
+    )
+
+
+def append_source_file(existing, source_file):
+    if not source_file:
+        return existing or ""
+    files = [item for item in (existing or "").split(", ") if item]
+    if source_file not in files:
+        files.append(source_file)
+    return ", ".join(files)
+
+
+def collapse_campaign_attempts(session, campaign):
+    attempts = session.scalars(
+        select(CallAttempt)
+        .where(CallAttempt.campaign_id == campaign.id)
+        .order_by(CallAttempt.called_at, CallAttempt.phone)
+    ).all()
+    grouped = {}
+    for attempt in attempts:
+        day = attempt.called_at.date().isoformat() if attempt.called_at else ""
+        key = (attempt.phone_normalized, day)
+        item = grouped.setdefault(
+            key,
+            {
+                "phone": attempt.phone,
+                "phone_normalized": attempt.phone_normalized,
+                "call_duration_seconds": 0,
+                "manager_duration_seconds": 0,
+                "called_at": attempt.called_at,
+                "cost": Decimal("0"),
+                "comment": "",
+                "source_file": "",
+            },
+        )
+        item["call_duration_seconds"] += attempt.call_duration_seconds or 0
+        item["manager_duration_seconds"] += attempt.manager_duration_seconds or 0
+        item["cost"] += Decimal(attempt.cost or 0)
+        item["source_file"] = append_source_file(item["source_file"], attempt.source_file)
+        if attempt.comment:
+            item["comment"] = append_source_file(item["comment"], attempt.comment)
+        if attempt.called_at and (item["called_at"] is None or attempt.called_at < item["called_at"]):
+            item["called_at"] = attempt.called_at
+
+    session.execute(delete(CallAttempt).where(CallAttempt.campaign_id == campaign.id))
+    for item in grouped.values():
+        session.add(CallAttempt(campaign_id=campaign.id, **item))
+    campaign.total_calls = len(grouped)
+
+
+def merge_campaigns_by_day():
+    Session = make_session_factory()
+    with Session() as session:
+        campaigns = session.scalars(
+            select(CallCampaign).order_by(CallCampaign.called_at, CallCampaign.id)
+        ).all()
+        by_day = {}
+        merged = 0
+        for campaign in campaigns:
+            if campaign.called_at is None:
+                continue
+            day = campaign.called_at.date().isoformat()
+            primary = by_day.get(day)
+            if primary is None:
+                by_day[day] = campaign
+                continue
+
+            attempts = session.scalars(
+                select(CallAttempt).where(CallAttempt.campaign_id == campaign.id)
+            ).all()
+            for attempt in attempts:
+                attempt.campaign_id = primary.id
+            primary.title = primary.title or campaign.title
+            primary.source_file = append_source_file(primary.source_file, campaign.source_file)
+            primary.callbacks = max(primary.callbacks or 0, campaign.callbacks or 0)
+            session.delete(campaign)
+            merged += 1
+
+        session.flush()
+        for campaign in by_day.values():
+            collapse_campaign_attempts(session, campaign)
+
+        session.commit()
+        return {"days": len(by_day), "merged_campaigns": merged}

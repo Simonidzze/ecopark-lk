@@ -151,6 +151,7 @@ class CallAttempt(Base):
     called_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     cost: Mapped[Decimal] = mapped_column(Numeric(15, 4), nullable=False, default=0)
     comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    source_file: Mapped[str] = mapped_column(String(255), nullable=False, default="")
 
 
 class Payment(Base):

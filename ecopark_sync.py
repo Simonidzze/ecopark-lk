@@ -49,6 +49,13 @@ def command_import_calls(args):
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def command_normalize_calls(_args):
+    from ecopark_sync.calls import merge_campaigns_by_day
+
+    result = merge_campaigns_by_day()
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 def build_parser():
     parser = argparse.ArgumentParser(description="Sync Ecopark 1C snapshot into MySQL")
     parser.add_argument("--env-file", default=".env", help="Path to .env file")
@@ -74,6 +81,9 @@ def build_parser():
     calls_parser = subparsers.add_parser("import-calls", help="Import call campaign CSV report")
     calls_parser.add_argument("file", help="CSV report file")
     calls_parser.set_defaults(func=command_import_calls)
+
+    normalize_calls_parser = subparsers.add_parser("normalize-calls", help="Merge call campaigns by day")
+    normalize_calls_parser.set_defaults(func=command_normalize_calls)
 
     return parser
 
