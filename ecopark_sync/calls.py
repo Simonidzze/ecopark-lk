@@ -86,10 +86,11 @@ def read_call_report(file_obj, source_file=""):
             continue
 
         first = cells[0]
-        if first == "Рассылка" and len(cells) > 1:
-            campaign["called_at"] = parse_datetime_value(cells[1])
+        if first == "Рассылка":
             if len(cells) > 3:
-                campaign["report_created_at"] = parse_datetime_value(cells[3])
+                created_at = parse_datetime_value(cells[3])
+                campaign["called_at"] = created_at
+                campaign["report_created_at"] = created_at
             continue
         if first == "Номер обзвона" and len(cells) > 1:
             campaign["caller_phone"] = cells[1]
@@ -143,7 +144,12 @@ def import_call_report(file_obj, source_file=""):
         else:
             campaign.title = campaign.title or campaign_data["title"]
             campaign.caller_phone = campaign.caller_phone or campaign_data["caller_phone"]
-            campaign.called_at = campaign.called_at or campaign_data["called_at"]
+            called_at = campaign_data["called_at"]
+            if called_at is not None:
+                if campaign.called_at is not None and campaign.called_at.date() == called_at.date():
+                    campaign.called_at = min(campaign.called_at, called_at)
+                else:
+                    campaign.called_at = called_at
             campaign.report_created_at = campaign_data["report_created_at"] or campaign.report_created_at
             campaign.callbacks = max(campaign.callbacks or 0, campaign_data["callbacks"] or 0)
             campaign.source_file = append_source_file(campaign.source_file, source_file)

@@ -2,11 +2,11 @@ import unittest
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from ecopark_sync.models import Base, CallAttempt, CallCampaign, OwnerPlot, Payment
-from ecopark_sync.web import campaign_analysis
+from ecopark_sync.web import campaign_analysis, delete_campaign_day
 
 
 class CampaignAnalysisTest(unittest.TestCase):
@@ -139,6 +139,17 @@ class CampaignAnalysisTest(unittest.TestCase):
         self.assertEqual(rows[0]["payment_sum"], Decimal("200.00"))
         self.assertEqual(stats["paid_owner_plots"], 1)
         self.assertEqual(stats["payment_sum"], Decimal("200.00"))
+
+    def test_delete_campaign_removes_all_reports_and_calls_from_same_day(self):
+        result = delete_campaign_day(self.session, self.first_campaign)
+        self.session.commit()
+
+        remaining_campaign_ids = set(self.session.scalars(select(CallCampaign.external_id)))
+        remaining_attempt_campaign_ids = set(self.session.scalars(select(CallAttempt.campaign_id)))
+
+        self.assertEqual(result, {"campaigns": 2, "attempts": 2})
+        self.assertEqual(remaining_campaign_ids, {"campaign-2"})
+        self.assertEqual(remaining_attempt_campaign_ids, {self.second_campaign.id})
 
 
 if __name__ == "__main__":

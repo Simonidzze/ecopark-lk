@@ -3,7 +3,18 @@
 {% block title %}Обзвон {{ campaign.external_id if campaign else "" }} - Ecopark LK Admin{% endblock %}
 
 {% block actions %}
-  <a class="button" href="{{ url_for('calls') }}">К обзвонам</a>
+  <div class="toolbar">
+    <a class="button secondary" href="{{ url_for('calls') }}">К обзвонам</a>
+    {% if campaign %}
+      <form
+        method="post"
+        action="{{ url_for('delete_call_campaign', campaign_id=campaign.id) }}"
+        onsubmit="return confirm('Удалить обзвон за эту дату вместе со всеми звонками?')"
+      >
+        <button class="button danger" type="submit">Удалить обзвон</button>
+      </form>
+    {% endif %}
+  </div>
 {% endblock %}
 
 {% block content %}

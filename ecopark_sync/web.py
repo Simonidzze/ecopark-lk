@@ -8,7 +8,7 @@ try:
 except ModuleNotFoundError:
     Flask = None
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from .calls import import_call_report, normalize_phone
 from .config import env, require_dependency
@@ -217,6 +217,24 @@ def campaign_payment_period_end(session, campaign, as_of=None):
     if next_campaign_at is None:
         return as_of
     return min(next_campaign_at, as_of)
+
+
+def delete_campaign_day(session, campaign):
+    campaign_ids_statement = select(CallCampaign.id).where(CallCampaign.id == campaign.id)
+    if campaign.called_at is not None:
+        campaign_ids_statement = select(CallCampaign.id).where(
+            func.date(CallCampaign.called_at) == campaign.called_at.date().isoformat()
+        )
+
+    campaign_ids = list(session.scalars(campaign_ids_statement).all())
+    attempts_count = session.scalar(
+        select(func.count())
+        .select_from(CallAttempt)
+        .where(CallAttempt.campaign_id.in_(campaign_ids))
+    ) or 0
+    session.execute(delete(CallAttempt).where(CallAttempt.campaign_id.in_(campaign_ids)))
+    session.execute(delete(CallCampaign).where(CallCampaign.id.in_(campaign_ids)))
+    return {"campaigns": len(campaign_ids), "attempts": attempts_count}
 
 
 def campaign_analysis(session, campaign, as_of=None):
@@ -479,6 +497,24 @@ def create_app():
         except Exception as exc:
             flash(f"Ошибка загрузки отчета обзвона: {exc}", "error")
             return redirect(url_for("calls"))
+
+    @app.post("/admin/calls/<int:campaign_id>/delete")
+    def delete_call_campaign(campaign_id):
+        Session = make_session_factory()
+        with Session() as session:
+            campaign = session.get(CallCampaign, campaign_id)
+            if campaign is None:
+                abort(404)
+            campaign_day = campaign.called_at.strftime("%d.%m.%Y") if campaign.called_at else campaign.title
+            result = delete_campaign_day(session, campaign)
+            session.commit()
+
+        flash(
+            f"Обзвон за {campaign_day} удалён: "
+            f"{result['campaigns']} отчётов, {result['attempts']} звонков",
+            "success",
+        )
+        return redirect(url_for("calls"))
 
     @app.get("/admin/calls/<int:campaign_id>")
     def call_detail(campaign_id):
