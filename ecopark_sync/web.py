@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 import re
@@ -201,7 +202,25 @@ def load_debtors_report(min_months_value, max_months_value=None):
     return rows, stats, phones
 
 
-def campaign_analysis(session, campaign):
+def campaign_payment_period_end(session, campaign, as_of=None):
+    as_of = as_of or datetime.now().replace(microsecond=0)
+    if campaign.called_at is None:
+        return as_of
+
+    next_campaign_at = session.scalar(
+        select(CallCampaign.called_at)
+        .where(CallCampaign.id != campaign.id)
+        .where(func.date(CallCampaign.called_at) > campaign.called_at.date().isoformat())
+        .order_by(CallCampaign.called_at, CallCampaign.id)
+        .limit(1)
+    )
+    if next_campaign_at is None:
+        return as_of
+    return min(next_campaign_at, as_of)
+
+
+def campaign_analysis(session, campaign, as_of=None):
+    payment_period_end = campaign_payment_period_end(session, campaign, as_of=as_of)
     attempts = session.scalars(
         select(CallAttempt)
         .where(CallAttempt.campaign_id == campaign.id)
@@ -267,6 +286,7 @@ def campaign_analysis(session, campaign):
         payments = session.scalars(
             select(Payment)
             .where(Payment.owner_plot_id.in_(rows_by_owner_plot))
+            .where(Payment.date < payment_period_end)
             .order_by(Payment.date)
         ).all()
         for payment in payments:
