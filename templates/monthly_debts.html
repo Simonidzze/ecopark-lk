@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Задолженность по месяцам - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button secondary" href="{{ url_for('debts') }}">К участкам</a>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
+  {% endif %}
+
+  {% if latest %}
+    <section class="metrics" aria-label="Задолженность за последний завершённый месяц">
+      <div class="metric">
+        <div class="label">Последний период</div>
+        <div class="value">{{ latest.period_end.strftime("%d.%m.%Y") }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Задолженность</div>
+        <div class="value">{{ "%.2f"|format(latest.debt or 0) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Переплата</div>
+        <div class="value">{{ "%.2f"|format(latest.overpayment or 0) }}</div>
+      </div>
+      <div class="metric">
+        <div class="label">Должников</div>
+        <div class="value">{{ latest.debtors }}</div>
+      </div>
+    </section>
+  {% endif %}
+
+  <div class="message" style="margin-bottom: 16px;">
+    Остатки показаны на конец каждого завершённого месяца. Расчёт выполнен от текущих остатков назад
+    по начислениям и платежам{% if as_of %} по данным на {{ as_of.strftime("%d.%m.%Y %H:%M") }}{% endif %}.
+    Пени не включены, так как история их изменения в базе не хранится.
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Задолженность по месяцам</h2>
+      <span class="muted">Периодов: {{ rows|length }}</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Месяц</th>
+            <th class="num">Начислено</th>
+            <th class="num">Оплачено</th>
+            <th class="num">Долг на конец месяца</th>
+            <th class="num">Изменение долга</th>
+            <th class="num">Переплата</th>
+            <th class="num">Должников</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.period_end.strftime("%m.%Y") }}</td>
+              <td class="num">{{ "%.2f"|format(row.accruals or 0) }}</td>
+              <td class="num">{{ "%.2f"|format(row.payments or 0) }}</td>
+              <td class="num">{{ "%.2f"|format(row.debt or 0) }}</td>
+              <td class="num">
+                {% if row.debt_change is not none %}
+                  {{ "%+.2f"|format(row.debt_change) }}
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td class="num">{{ "%.2f"|format(row.overpayment or 0) }}</td>
+              <td class="num">{{ row.debtors }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="7" class="muted">Нет данных за завершённые месяцы</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

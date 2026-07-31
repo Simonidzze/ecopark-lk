@@ -1,4 +1,5 @@
-from datetime import datetime
+from collections import defaultdict
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 import re
@@ -47,6 +48,147 @@ def month_key(value):
     if value is None:
         return None
     return value.strftime("%Y-%m")
+
+
+def date_value(value):
+    if isinstance(value, datetime):
+        return value.date()
+    return value
+
+
+def month_end(value):
+    value = date_value(value)
+    next_month = (value.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return next_month - timedelta(days=1)
+
+
+def iter_month_ends(first_value, last_value):
+    current = month_end(first_value)
+    last = date_value(last_value)
+    while current <= last:
+        yield current
+        current = month_end(current + timedelta(days=1))
+
+
+def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of):
+    """Reconstruct principal balances at completed month ends from the current snapshot."""
+    as_of_date = date_value(as_of)
+    report_end = as_of_date.replace(day=1) - timedelta(days=1)
+    balances = {}
+    owners = {}
+    for row in owner_plot_rows:
+        owner_plot_id = row["owner_plot_id"]
+        balances[owner_plot_id] = (
+            decimal_value(row.get("debt"))
+            - decimal_value(row.get("overpayment"))
+        )
+        owners[owner_plot_id] = row.get("owner_id") or owner_plot_id
+
+    operations = []
+    accruals_by_month = defaultdict(Decimal)
+    payments_by_month = defaultdict(Decimal)
+    first_operation_date = None
+
+    for owner_plot_id, operation_date, amount in accrual_rows:
+        operation_date = date_value(operation_date)
+        if operation_date is None or operation_date > as_of_date:
+            continue
+        amount = decimal_value(amount)
+        operations.append((operation_date, owner_plot_id, amount, "accrual"))
+        accruals_by_month[month_key(operation_date)] += amount
+        if first_operation_date is None or operation_date < first_operation_date:
+            first_operation_date = operation_date
+
+    for owner_plot_id, operation_date, amount in payment_rows:
+        operation_date = date_value(operation_date)
+        if operation_date is None or operation_date > as_of_date:
+            continue
+        amount = decimal_value(amount)
+        operations.append((operation_date, owner_plot_id, amount, "payment"))
+        payments_by_month[month_key(operation_date)] += amount
+        if first_operation_date is None or operation_date < first_operation_date:
+            first_operation_date = operation_date
+
+    report_start = min(first_operation_date or report_end, report_end)
+    period_ends = list(iter_month_ends(report_start, report_end))
+    operations.sort(key=lambda item: item[0], reverse=True)
+
+    rows = []
+    operation_index = 0
+    for period_end in reversed(period_ends):
+        while operation_index < len(operations) and operations[operation_index][0] > period_end:
+            _date, owner_plot_id, amount, operation_type = operations[operation_index]
+            balances.setdefault(owner_plot_id, Decimal("0"))
+            owners.setdefault(owner_plot_id, owner_plot_id)
+            if operation_type == "accrual":
+                balances[owner_plot_id] -= amount
+            else:
+                balances[owner_plot_id] += amount
+            operation_index += 1
+
+        debt = sum((amount for amount in balances.values() if amount > 0), Decimal("0"))
+        overpayment = -sum((amount for amount in balances.values() if amount < 0), Decimal("0"))
+        debtor_ids = {
+            owners[owner_plot_id]
+            for owner_plot_id, amount in balances.items()
+            if amount > 0
+        }
+        key = month_key(period_end)
+        rows.append(
+            {
+                "month": key,
+                "period_end": period_end,
+                "accruals": accruals_by_month[key],
+                "payments": payments_by_month[key],
+                "debt": debt,
+                "overpayment": overpayment,
+                "net_balance": debt - overpayment,
+                "debtors": len(debtor_ids),
+                "debt_change": None,
+            }
+        )
+
+    rows.reverse()
+    previous_debt = None
+    for row in rows:
+        if previous_debt is not None:
+            row["debt_change"] = row["debt"] - previous_debt
+        previous_debt = row["debt"]
+    rows.reverse()
+    return rows
+
+
+def load_monthly_debt_report():
+    Session = make_session_factory()
+    with Session() as session:
+        owner_plot_rows = session.execute(
+            select(
+                OwnerPlot.id.label("owner_plot_id"),
+                OwnerPlot.owner_id,
+                Balance.debt,
+                Balance.overpayment,
+            ).outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
+        ).mappings().all()
+        accrual_rows = session.execute(
+            select(Accrual.owner_plot_id, Accrual.date, Accrual.amount)
+        ).all()
+        payment_rows = session.execute(
+            select(Payment.owner_plot_id, Payment.date, Payment.amount)
+        ).all()
+        as_of = session.scalar(
+            select(func.max(SyncRun.source_generated_at)).where(SyncRun.status == "ok")
+        )
+        if as_of is None:
+            as_of = session.scalar(select(func.max(Balance.synced_at))) or datetime.now()
+
+    rows = build_monthly_debt_report(
+        owner_plot_rows,
+        accrual_rows,
+        payment_rows,
+        as_of,
+    )
+    latest = rows[0] if rows else None
+    return rows, latest, as_of
 
 
 def parse_min_months(value):
@@ -438,6 +580,26 @@ def create_app():
             phone_text="\n".join(phones),
             min_months=min_months,
             max_months=max_months,
+            db_error=db_error,
+        )
+
+    @app.get("/admin/debts/monthly")
+    def monthly_debts():
+        db_error = None
+        rows = []
+        latest = None
+        as_of = None
+
+        try:
+            rows, latest, as_of = load_monthly_debt_report()
+        except Exception as exc:
+            db_error = str(exc)
+
+        return render_template(
+            "monthly_debts.html",
+            rows=rows,
+            latest=latest,
+            as_of=as_of,
             db_error=db_error,
         )
 
