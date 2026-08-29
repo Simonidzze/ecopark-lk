@@ -1,0 +1,163 @@
+import os
+import unittest
+from datetime import date, datetime
+from decimal import Decimal
+from io import BytesIO
+from unittest.mock import patch
+from zipfile import ZipFile
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from ecopark_sync.claims import (
+    CLAIM_TOKENS,
+    claim_template_path,
+    claim_values,
+    extract_cadastral_number,
+    format_ru_money,
+    render_pretrial_claim,
+)
+from ecopark_sync.models import Balance, Base, OwnerPlot, Plot
+from ecopark_sync.web import create_app
+
+
+class ClaimDocumentTest(unittest.TestCase):
+    def sample_values(self):
+        return claim_values(
+            tsn_address="г. Новосибирск, ул. Тестовая, д. 1",
+            tsn_phone="+7 383 000-00-00",
+            tsn_email="info@example.test",
+            plot_number="42А",
+            owner_name="Иванов Иван Иванович",
+            plot_address="Новосибирская область, участок 42А",
+            cadastral_number="54:19:0123456:42",
+            claim_number="17/26",
+            claim_date=date(2026, 8, 29),
+            charge_basis="решения общего собрания, протокол № 3 от 01.03.2026",
+            account="000042",
+            calculation_date=date(2026, 8, 28),
+            debt_period_from=date(2026, 1, 1),
+            debt_period_to=date(2026, 8, 28),
+            principal_amount=Decimal("12345.67"),
+            penalty_amount=Decimal("89.10"),
+            penalty_basis="пункт 4 решения общего собрания",
+            total_amount=Decimal("12434.77"),
+        )
+
+    def test_formats_money_and_extracts_cadastral_number(self):
+        self.assertEqual(format_ru_money(Decimal("1234.5")), "1 234 руб. 50 коп.")
+        self.assertEqual(
+            extract_cadastral_number("участок, кадастровый № 54:19:0123456:42"),
+            "54:19:0123456:42",
+        )
+
+    def test_renders_docx_and_preserves_package_parts(self):
+        values = self.sample_values()
+        generated = render_pretrial_claim(values)
+
+        with ZipFile(claim_template_path(), "r") as template, ZipFile(generated, "r") as result:
+            self.assertEqual(template.namelist(), result.namelist())
+            self.assertEqual(template.read("word/header1.xml"), result.read("word/header1.xml"))
+            self.assertEqual(template.read("word/footer1.xml"), result.read("word/footer1.xml"))
+            document_xml = result.read("word/document.xml").decode("utf-8")
+            settings_xml = result.read("word/settings.xml").decode("utf-8")
+
+        for token in CLAIM_TOKENS:
+            self.assertNotIn("{{" + token + "}}", document_xml)
+        self.assertIn("Иванов Иван Иванович", document_xml)
+        self.assertIn("12 345 руб. 67 коп.", document_xml)
+        self.assertIn("54:19:0123456:42", document_xml)
+        self.assertIn("<w:pageBreakBefore/>", document_xml)
+        self.assertNotIn('<w:br w:type="page"/>', document_xml)
+        self.assertIn('<w:updateFields w:val="true"/>', settings_xml)
+
+
+class ClaimDownloadRouteTest(unittest.TestCase):
+    def setUp(self):
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+        Base.metadata.create_all(engine)
+        self.Session = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+        synced_at = datetime(2026, 8, 28, 12, 0)
+        with self.Session() as session:
+            session.add(
+                Plot(
+                    id="plot-1",
+                    plot_number="42А",
+                    account="000042",
+                    address="Новосибирская область, кадастровый № 54:19:0123456:42",
+                    organization_id="org-1",
+                    organization="ТСН «МИКРОРАЙОН ЭКОПАРК»",
+                    sync_run_id=1,
+                    synced_at=synced_at,
+                )
+            )
+            session.add(
+                OwnerPlot(
+                    id="owner-plot-1",
+                    owner_id="owner-1",
+                    owner="Иванов Иван Иванович",
+                    phone="+7 999 000-00-00",
+                    plot_id="plot-1",
+                    plot_number="42А",
+                    account="000042",
+                    presentation="Иванов И.И., участок 42А",
+                    organization_id="org-1",
+                    sync_run_id=1,
+                    synced_at=synced_at,
+                )
+            )
+            session.add(
+                Balance(
+                    owner_plot_id="owner-plot-1",
+                    owner_id="owner-1",
+                    plot_id="plot-1",
+                    plot_number="42А",
+                    account="000042",
+                    debt=Decimal("12345.67"),
+                    penalty=Decimal("0"),
+                    overpayment=Decimal("0"),
+                    total=Decimal("12345.67"),
+                    currency="RUB",
+                    sync_run_id=1,
+                    synced_at=synced_at,
+                )
+            )
+            session.commit()
+
+    def test_downloads_filled_claim_for_owner_plot(self):
+        environment = {
+            "TSN_LEGAL_ADDRESS": "г. Новосибирск, ул. Тестовая, д. 1",
+            "TSN_PHONE": "+7 383 000-00-00",
+            "TSN_EMAIL": "info@example.test",
+            "TSN_CLAIM_BASIS": "решения общего собрания, протокол № 3 от 01.03.2026",
+        }
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session), patch.dict(
+            os.environ,
+            environment,
+            clear=False,
+        ):
+            client = create_app().test_client()
+            response = client.get(
+                "/admin/plots/owner-plot-1/pretrial-claim.docx",
+                query_string={
+                    "claim_number": "17/26",
+                    "claim_date": "2026-08-29",
+                    "debt_period_from": "2026-01-01",
+                    "debt_period_to": "2026-08-28",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.assertIn("attachment", response.headers["Content-Disposition"])
+        with ZipFile(BytesIO(response.data), "r") as document:
+            xml = document.read("word/document.xml").decode("utf-8")
+        self.assertIn("Иванов Иван Иванович", xml)
+        self.assertIn("54:19:0123456:42", xml)
+        self.assertIn("12 345 руб. 67 коп.", xml)
+        self.assertIn("не начислены", xml)
+        self.assertNotIn("{{", xml)
+
+
+if __name__ == "__main__":
+    unittest.main()

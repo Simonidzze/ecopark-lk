@@ -44,8 +44,55 @@
             <th>Переплата</th>
             <td class="num">{{ "%.2f"|format(details.overpayment or 0) }}</td>
           </tr>
+          <tr>
+            <th>Адрес участка</th>
+            <td colspan="3">{{ details.address or "не указан" }}</td>
+          </tr>
         </tbody>
       </table>
+    </section>
+
+    <section class="section" style="margin-bottom: 16px;">
+      <div class="section-head">
+        <h2>Досудебная претензия</h2>
+        <span class="status">DOCX</span>
+      </div>
+      <div class="form-body">
+        {% if claim_missing %}
+          <div class="message error">
+            Автоматически не хватает: {{ claim_missing|join(", ") }}. Постоянные реквизиты ТСН задаются в env.prod, остальные можно указать ниже.
+          </div>
+        {% endif %}
+        <form class="form-grid" method="get" action="{{ url_for('plot_pretrial_claim', owner_plot_id=details.id) }}">
+          <label class="field">
+            <span>Исходящий номер</span>
+            <input class="input" type="text" name="claim_number" value="{{ claim_defaults.claim_number }}" placeholder="Если пусто — б/н">
+          </label>
+          <label class="field">
+            <span>Дата претензии</span>
+            <input class="input" type="date" name="claim_date" value="{{ claim_defaults.claim_date }}" required>
+          </label>
+          <label class="field">
+            <span>Кадастровый номер</span>
+            <input class="input" type="text" name="cadastral_number" value="{{ claim_defaults.cadastral_number }}" placeholder="54:…">
+          </label>
+          <label class="field">
+            <span>Период долга с</span>
+            <input class="input" type="date" name="debt_period_from" value="{{ claim_defaults.debt_period_from }}">
+          </label>
+          <label class="field">
+            <span>Период долга по</span>
+            <input class="input" type="date" name="debt_period_to" value="{{ claim_defaults.debt_period_to }}">
+          </label>
+          <label class="field field-wide">
+            <span>Основание начислений</span>
+            <textarea class="input" name="charge_basis" rows="2" placeholder="решения общего собрания, протокол №… от …">{{ claim_defaults.charge_basis }}</textarea>
+          </label>
+          <div class="field-wide">
+            <button class="button" type="submit">Скачать заполненную претензию</button>
+          </div>
+        </form>
+      </div>
     </section>
 
     <div class="grid grid-even">

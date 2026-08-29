@@ -213,6 +213,33 @@
       flex-wrap: wrap;
     }
 
+    .form-body { padding: 16px; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 16px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .field .input {
+      width: 100%;
+      min-width: 0;
+      color: var(--text);
+      font-weight: 400;
+    }
+
+    .field-wide { grid-column: 1 / -1; }
+
+    textarea.input { resize: vertical; }
+
     table {
       width: 100%;
       border-collapse: collapse;
@@ -269,7 +296,10 @@
 
     @media (max-width: 900px) {
       .metrics,
-      .grid { grid-template-columns: 1fr; }
+      .grid,
+      .form-grid { grid-template-columns: 1fr; }
+
+      .field-wide { grid-column: auto; }
 
       .topbar {
         align-items: flex-start;

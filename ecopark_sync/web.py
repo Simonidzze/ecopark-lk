@@ -5,13 +5,21 @@ from pathlib import Path
 import re
 
 try:
-    from flask import Flask, Response, abort, flash, redirect, render_template, request, url_for
+    from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, url_for
 except ModuleNotFoundError:
     Flask = None
 
 from sqlalchemy import delete, func, select
 
 from .calls import import_call_report, normalize_phone
+from .claims import (
+    DOCX_CONTENT_TYPE,
+    claim_values,
+    extract_cadastral_number,
+    parse_iso_date,
+    render_pretrial_claim,
+    safe_claim_filename,
+)
 from .config import env, require_dependency
 from .db import make_session_factory
 from .models import Accrual, Balance, CallAttempt, CallCampaign, MessengerBinding, Owner, OwnerPlot, Payment, Plot, SyncRun
@@ -711,6 +719,8 @@ def create_app():
         details = None
         payments = []
         accruals = []
+        claim_defaults = {}
+        claim_missing = []
 
         try:
             Session = make_session_factory()
@@ -722,11 +732,14 @@ def create_app():
                         OwnerPlot.account,
                         OwnerPlot.owner,
                         OwnerPlot.phone,
+                        Plot.address,
                         Balance.debt,
                         Balance.penalty,
                         Balance.overpayment,
                         Balance.total,
+                        Balance.synced_at.label("balance_synced_at"),
                     )
+                    .outerjoin(Plot, Plot.id == OwnerPlot.plot_id)
                     .outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
                     .where(OwnerPlot.id == owner_plot_id)
                 ).mappings().first()
@@ -743,6 +756,34 @@ def create_app():
                     .where(Accrual.owner_plot_id == owner_plot_id)
                     .order_by(Accrual.date.desc(), Accrual.number.desc())
                 ).all()
+
+                calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
+                claim_defaults = {
+                    "claim_number": "",
+                    "claim_date": datetime.now().date().isoformat(),
+                    "cadastral_number": extract_cadastral_number(details["address"]),
+                    "debt_period_from": "",
+                    "debt_period_to": calculation_date.isoformat(),
+                    "charge_basis": env("TSN_CLAIM_BASIS", ""),
+                }
+
+                organization_fields = (
+                    ("TSN_LEGAL_ADDRESS", "юридический или почтовый адрес ТСН"),
+                    ("TSN_PHONE", "телефон ТСН"),
+                    ("TSN_EMAIL", "электронная почта ТСН"),
+                )
+                claim_missing.extend(
+                    label
+                    for setting, label in organization_fields
+                    if not env(setting, "").strip()
+                )
+                if not details["address"]:
+                    claim_missing.append("адрес участка")
+                if not claim_defaults["cadastral_number"]:
+                    claim_missing.append("кадастровый номер")
+                claim_missing.extend(("исходящий номер претензии", "начало периода задолженности"))
+                if not claim_defaults["charge_basis"]:
+                    claim_missing.append("дата и номер решения общего собрания об обязательных платежах")
         except Exception as exc:
             db_error = str(exc)
 
@@ -751,7 +792,96 @@ def create_app():
             details=details,
             payments=payments,
             accruals=accruals,
+            claim_defaults=claim_defaults,
+            claim_missing=claim_missing,
             db_error=db_error,
+        )
+
+    @app.get("/admin/plots/<owner_plot_id>/pretrial-claim.docx")
+    def plot_pretrial_claim(owner_plot_id):
+        Session = make_session_factory()
+        with Session() as session:
+            details = session.execute(
+                select(
+                    OwnerPlot.id,
+                    OwnerPlot.plot_number,
+                    OwnerPlot.account,
+                    OwnerPlot.owner,
+                    Plot.address,
+                    Balance.debt,
+                    Balance.penalty,
+                    Balance.overpayment,
+                    Balance.total,
+                    Balance.synced_at.label("balance_synced_at"),
+                )
+                .outerjoin(Plot, Plot.id == OwnerPlot.plot_id)
+                .outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
+                .where(OwnerPlot.id == owner_plot_id)
+            ).mappings().first()
+        if details is None:
+            abort(404)
+
+        principal_amount = decimal_value(details["debt"])
+        penalty_amount = decimal_value(details["penalty"])
+        if details["total"] is None:
+            total_amount = principal_amount + penalty_amount - decimal_value(details["overpayment"])
+        else:
+            total_amount = decimal_value(details["total"])
+        if total_amount <= 0:
+            abort(400, description="По участку нет суммы к взысканию")
+
+        calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
+        try:
+            claim_date = parse_iso_date(
+                request.args.get("claim_date"),
+                "Дата претензии",
+                default=datetime.now().date(),
+            )
+            debt_period_from = parse_iso_date(
+                request.args.get("debt_period_from"),
+                "Период задолженности с",
+            )
+            debt_period_to = parse_iso_date(
+                request.args.get("debt_period_to"),
+                "Период задолженности по",
+                default=calculation_date,
+            )
+        except ValueError as exc:
+            abort(400, description=str(exc))
+
+        values = claim_values(
+            tsn_address=env("TSN_LEGAL_ADDRESS", ""),
+            tsn_phone=env("TSN_PHONE", ""),
+            tsn_email=env("TSN_EMAIL", ""),
+            plot_number=details["plot_number"],
+            owner_name=details["owner"],
+            plot_address=details["address"],
+            cadastral_number=(
+                request.args.get("cadastral_number", "").strip()
+                or extract_cadastral_number(details["address"])
+            ),
+            claim_number=request.args.get("claim_number", "").strip(),
+            claim_date=claim_date,
+            charge_basis=(
+                request.args.get("charge_basis", "").strip()
+                or env("TSN_CLAIM_BASIS", "")
+            ),
+            account=details["account"],
+            calculation_date=calculation_date,
+            debt_period_from=debt_period_from,
+            debt_period_to=debt_period_to,
+            principal_amount=principal_amount,
+            penalty_amount=penalty_amount,
+            penalty_basis="",
+            total_amount=total_amount,
+        )
+        document = render_pretrial_claim(values)
+        return send_file(
+            document,
+            mimetype=DOCX_CONTENT_TYPE,
+            as_attachment=True,
+            download_name=safe_claim_filename(details["plot_number"], claim_date),
+            max_age=0,
         )
 
     @app.post("/admin/sync")
