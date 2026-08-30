@@ -191,7 +191,9 @@ def render_pretrial_claim(values, template_path=None):
     return output
 
 
-def safe_claim_filename(plot_number, claim_date):
+def safe_claim_filename(plot_number, claim_date, claim_number=None):
     plot_slug = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_-]+", "-", str(plot_number or "").strip())
     plot_slug = plot_slug.strip("-") or "unknown"
-    return f"pretenziya-uchastok-{plot_slug}-{claim_date.isoformat()}.docx"
+    number_slug = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_-]+", "-", str(claim_number or "").strip())
+    number_suffix = f"-n-{number_slug.strip('-')}" if number_slug.strip("-") else ""
+    return f"pretenziya-uchastok-{plot_slug}{number_suffix}-{claim_date.isoformat()}.docx"

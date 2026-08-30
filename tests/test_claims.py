@@ -17,7 +17,7 @@ from ecopark_sync.claims import (
     format_ru_money,
     render_pretrial_claim,
 )
-from ecopark_sync.models import Balance, Base, OwnerPlot, Plot
+from ecopark_sync.models import Balance, Base, OwnerPlot, Plot, PretrialClaim
 from ecopark_sync.web import create_app
 
 
@@ -140,26 +140,53 @@ class ClaimDownloadRouteTest(unittest.TestCase):
             clear=False,
         ):
             client = create_app().test_client()
-            response = client.get(
+            response = client.post(
                 "/admin/plots/owner-plot-1/pretrial-claim.docx",
-                query_string={
-                    "claim_number": "17/26",
+                data={
                     "claim_date": "2026-08-29",
                     "debt_period_to": "2026-08-28",
                 },
             )
+            second_response = client.post(
+                "/admin/plots/owner-plot-1/pretrial-claim.docx",
+                data={
+                    "claim_date": "2026-08-30",
+                    "debt_period_to": "2026-08-28",
+                },
+            )
+            history_response = client.get("/admin/plots/owner-plot-1")
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         self.assertIn("attachment", response.headers["Content-Disposition"])
+        self.assertIn("n-1", response.headers["Content-Disposition"])
         with ZipFile(BytesIO(response.data), "r") as document:
             xml = document.read("word/document.xml").decode("utf-8")
         self.assertIn("Иванов Иван Иванович", xml)
+        self.assertIn("Исх. № 1", xml)
         self.assertIn("54:19:0123456:42", xml)
         self.assertIn("с 01.10.2025 по 28.08.2026", xml)
         self.assertIn("12 345 руб. 67 коп.", xml)
         self.assertIn("не начислены", xml)
         self.assertNotIn("{{", xml)
+
+        self.assertEqual(second_response.status_code, 200)
+        with ZipFile(BytesIO(second_response.data), "r") as document:
+            second_xml = document.read("word/document.xml").decode("utf-8")
+        self.assertIn("Исх. № 2", second_xml)
+        self.assertIn("n-2", second_response.headers["Content-Disposition"])
+        self.assertIn("Выданные претензии", history_response.get_data(as_text=True))
+
+        with self.Session() as session:
+            claim = session.get(PretrialClaim, 1)
+            second_claim = session.get(PretrialClaim, 2)
+        self.assertIsNotNone(claim)
+        self.assertEqual(claim.owner_plot_id, "owner-plot-1")
+        self.assertEqual(claim.plot_number, "42А")
+        self.assertEqual(claim.owner_name, "Иванов Иван Иванович")
+        self.assertEqual(claim.total_amount, Decimal("12345.67"))
+        self.assertIsNotNone(second_claim)
+        self.assertEqual(second_claim.claim_date, date(2026, 8, 30))
 
 
 if __name__ == "__main__":

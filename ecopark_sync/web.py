@@ -23,7 +23,8 @@ from .claims import (
 )
 from .config import env, require_dependency
 from .db import make_session_factory
-from .models import Accrual, Balance, CallAttempt, CallCampaign, MessengerBinding, Owner, OwnerPlot, Payment, Plot, SyncRun
+from .models import Accrual, Balance, CallAttempt, CallCampaign, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
+from .utils import now_utc_naive
 
 
 COUNT_MODELS = (
@@ -36,6 +37,7 @@ COUNT_MODELS = (
     ("call_attempts", "Звонки", CallAttempt),
     ("payments", "Платежи", Payment),
     ("accruals", "Начисления", Accrual),
+    ("pretrial_claims", "Досудебные претензии", PretrialClaim),
 )
 
 
@@ -720,6 +722,7 @@ def create_app():
         details = None
         payments = []
         accruals = []
+        issued_claims = []
         claim_defaults = {}
         claim_missing = []
 
@@ -758,10 +761,15 @@ def create_app():
                     .where(Accrual.owner_plot_id == owner_plot_id)
                     .order_by(Accrual.date.desc(), Accrual.number.desc())
                 ).all()
+                issued_claims = session.scalars(
+                    select(PretrialClaim)
+                    .where(PretrialClaim.owner_plot_id == owner_plot_id)
+                    .order_by(PretrialClaim.number.desc())
+                    .limit(20)
+                ).all()
 
                 calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
                 claim_defaults = {
-                    "claim_number": "",
                     "claim_date": datetime.now().date().isoformat(),
                     "cadastral_number": (
                         details["cadastral_number"]
@@ -786,7 +794,6 @@ def create_app():
                     claim_missing.append("адрес участка")
                 if not claim_defaults["cadastral_number"]:
                     claim_missing.append("кадастровый номер")
-                claim_missing.append("исходящий номер претензии")
                 if not claim_defaults["charge_basis"]:
                     claim_missing.append("дата и номер решения общего собрания об обязательных платежах")
         except Exception as exc:
@@ -797,12 +804,13 @@ def create_app():
             details=details,
             payments=payments,
             accruals=accruals,
+            issued_claims=issued_claims,
             claim_defaults=claim_defaults,
             claim_missing=claim_missing,
             db_error=db_error,
         )
 
-    @app.get("/admin/plots/<owner_plot_id>/pretrial-claim.docx")
+    @app.post("/admin/plots/<owner_plot_id>/pretrial-claim.docx")
     def plot_pretrial_claim(owner_plot_id):
         Session = make_session_factory()
         with Session() as session:
@@ -824,71 +832,92 @@ def create_app():
                 .outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
                 .where(OwnerPlot.id == owner_plot_id)
             ).mappings().first()
-        if details is None:
-            abort(404)
+            if details is None:
+                abort(404)
 
-        principal_amount = decimal_value(details["debt"])
-        penalty_amount = decimal_value(details["penalty"])
-        if details["total"] is None:
-            total_amount = principal_amount + penalty_amount - decimal_value(details["overpayment"])
-        else:
-            total_amount = decimal_value(details["total"])
-        if total_amount <= 0:
-            abort(400, description="По участку нет суммы к взысканию")
+            principal_amount = decimal_value(details["debt"])
+            penalty_amount = decimal_value(details["penalty"])
+            if details["total"] is None:
+                total_amount = principal_amount + penalty_amount - decimal_value(details["overpayment"])
+            else:
+                total_amount = decimal_value(details["total"])
+            if total_amount <= 0:
+                abort(400, description="По участку нет суммы к взысканию")
 
-        calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
-        try:
-            claim_date = parse_iso_date(
-                request.args.get("claim_date"),
-                "Дата претензии",
-                default=datetime.now().date(),
-            )
-            debt_period_from = parse_iso_date(
-                request.args.get("debt_period_from"),
-                "Период задолженности с",
-                default=DEFAULT_DEBT_PERIOD_START,
-            )
-            debt_period_to = parse_iso_date(
-                request.args.get("debt_period_to"),
-                "Период задолженности по",
-                default=calculation_date,
-            )
-        except ValueError as exc:
-            abort(400, description=str(exc))
+            calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
+            try:
+                claim_date = parse_iso_date(
+                    request.form.get("claim_date"),
+                    "Дата претензии",
+                    default=datetime.now().date(),
+                )
+                debt_period_from = parse_iso_date(
+                    request.form.get("debt_period_from"),
+                    "Период задолженности с",
+                    default=DEFAULT_DEBT_PERIOD_START,
+                )
+                debt_period_to = parse_iso_date(
+                    request.form.get("debt_period_to"),
+                    "Период задолженности по",
+                    default=calculation_date,
+                )
+            except ValueError as exc:
+                abort(400, description=str(exc))
 
-        values = claim_values(
-            tsn_address=env("TSN_LEGAL_ADDRESS", ""),
-            tsn_phone=env("TSN_PHONE", ""),
-            tsn_email=env("TSN_EMAIL", ""),
-            plot_number=details["plot_number"],
-            owner_name=details["owner"],
-            plot_address=details["address"],
-            cadastral_number=(
-                request.args.get("cadastral_number", "").strip()
-                or details["cadastral_number"]
-                or extract_cadastral_number(details["address"])
-            ),
-            claim_number=request.args.get("claim_number", "").strip(),
-            claim_date=claim_date,
-            charge_basis=(
-                request.args.get("charge_basis", "").strip()
-                or env("TSN_CLAIM_BASIS", "")
-            ),
-            account=details["account"],
-            calculation_date=calculation_date,
-            debt_period_from=debt_period_from,
-            debt_period_to=debt_period_to,
-            principal_amount=principal_amount,
-            penalty_amount=penalty_amount,
-            penalty_basis="",
-            total_amount=total_amount,
-        )
-        document = render_pretrial_claim(values)
+            issued_claim = PretrialClaim(
+                owner_plot_id=owner_plot_id,
+                plot_number=details["plot_number"],
+                owner_name=details["owner"],
+                claim_date=claim_date,
+                calculation_date=calculation_date,
+                debt_period_from=debt_period_from,
+                debt_period_to=debt_period_to,
+                principal_amount=principal_amount,
+                total_amount=total_amount,
+                created_at=now_utc_naive(),
+            )
+            session.add(issued_claim)
+            session.flush()
+
+            values = claim_values(
+                tsn_address=env("TSN_LEGAL_ADDRESS", ""),
+                tsn_phone=env("TSN_PHONE", ""),
+                tsn_email=env("TSN_EMAIL", ""),
+                plot_number=details["plot_number"],
+                owner_name=details["owner"],
+                plot_address=details["address"],
+                cadastral_number=(
+                    request.form.get("cadastral_number", "").strip()
+                    or details["cadastral_number"]
+                    or extract_cadastral_number(details["address"])
+                ),
+                claim_number=str(issued_claim.number),
+                claim_date=claim_date,
+                charge_basis=(
+                    request.form.get("charge_basis", "").strip()
+                    or env("TSN_CLAIM_BASIS", "")
+                ),
+                account=details["account"],
+                calculation_date=calculation_date,
+                debt_period_from=debt_period_from,
+                debt_period_to=debt_period_to,
+                principal_amount=principal_amount,
+                penalty_amount=penalty_amount,
+                penalty_basis="",
+                total_amount=total_amount,
+            )
+            document = render_pretrial_claim(values)
+            session.commit()
+
         return send_file(
             document,
             mimetype=DOCX_CONTENT_TYPE,
             as_attachment=True,
-            download_name=safe_claim_filename(details["plot_number"], claim_date),
+            download_name=safe_claim_filename(
+                details["plot_number"],
+                claim_date,
+                issued_claim.number,
+            ),
             max_age=0,
         )
 

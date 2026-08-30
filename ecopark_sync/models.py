@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -202,3 +202,23 @@ class Accrual(Base):
     source: Mapped[str] = mapped_column(String(128), nullable=False)
     sync_run_id: Mapped[int] = mapped_column(Integer, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class PretrialClaim(Base):
+    __tablename__ = "pretrial_claims"
+    __table_args__ = (
+        Index("idx_pretrial_claims_owner_plot_id", "owner_plot_id"),
+        Index("idx_pretrial_claims_created_at", "created_at"),
+    )
+
+    number: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_plot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    plot_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    claim_date: Mapped[date] = mapped_column(Date, nullable=False)
+    calculation_date: Mapped[date] = mapped_column(Date, nullable=False)
+    debt_period_from: Mapped[Optional[date]] = mapped_column(Date)
+    debt_period_to: Mapped[Optional[date]] = mapped_column(Date)
+    principal_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
