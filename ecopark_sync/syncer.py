@@ -70,7 +70,7 @@ def sync_plots(session, snapshot, run_id, synced_at):
         for item in snapshot.get("plots", [])
         if item.get("id")
     ]
-    upsert_many(session, Plot, rows)
+    upsert_many(session, Plot, rows, preserve_columns=("cadastral_number",))
 
 
 def sync_owner_plots(session, snapshot, run_id, synced_at):

@@ -22,6 +22,10 @@ def apply_lightweight_upgrades(engine):
         statements.append("ALTER TABLE owners ADD COLUMN phone VARCHAR(100) NOT NULL DEFAULT '' AFTER name")
     if "owner_plots" in columns_by_table and "phone" not in columns_by_table["owner_plots"]:
         statements.append("ALTER TABLE owner_plots ADD COLUMN phone VARCHAR(100) NOT NULL DEFAULT '' AFTER owner")
+    if "plots" in columns_by_table and "cadastral_number" not in columns_by_table["plots"]:
+        statements.append(
+            "ALTER TABLE plots ADD COLUMN cadastral_number VARCHAR(64) NOT NULL DEFAULT '' AFTER address"
+        )
     if "call_attempts" in columns_by_table and "source_file" not in columns_by_table["call_attempts"]:
         statements.append("ALTER TABLE call_attempts ADD COLUMN source_file VARCHAR(255) NOT NULL DEFAULT '' AFTER comment")
 

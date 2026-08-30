@@ -8,6 +8,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DEFAULT_DEBT_PERIOD_START = date(2025, 10, 1)
 TOKEN_PATTERN = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
 CADASTRAL_NUMBER_PATTERN = re.compile(r"(?<!\d)(\d{2}:\d{2}:\d{6,7}:\d+)(?!\d)")
 

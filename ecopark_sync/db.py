@@ -29,17 +29,17 @@ def make_session_factory(engine=None):
     return sessionmaker(bind=engine or get_engine(), autoflush=False, expire_on_commit=False, future=True)
 
 
-def upsert_many(session, model, rows, key_columns=("id",)):
+def upsert_many(session, model, rows, key_columns=("id",), preserve_columns=()):
     if not rows:
         return
 
     from sqlalchemy.dialects.mysql import insert
 
-    key_columns = set(key_columns)
+    excluded_update_columns = set(key_columns) | set(preserve_columns)
     statement = insert(model).values(rows)
     updates = {
         column.name: statement.inserted[column.name]
         for column in model.__table__.columns
-        if column.name not in key_columns
+        if column.name not in excluded_update_columns
     }
     session.execute(statement.on_duplicate_key_update(**updates))

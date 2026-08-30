@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 
 from .calls import import_call_report, normalize_phone
 from .claims import (
+    DEFAULT_DEBT_PERIOD_START,
     DOCX_CONTENT_TYPE,
     claim_values,
     extract_cadastral_number,
@@ -733,6 +734,7 @@ def create_app():
                         OwnerPlot.owner,
                         OwnerPlot.phone,
                         Plot.address,
+                        Plot.cadastral_number,
                         Balance.debt,
                         Balance.penalty,
                         Balance.overpayment,
@@ -761,8 +763,11 @@ def create_app():
                 claim_defaults = {
                     "claim_number": "",
                     "claim_date": datetime.now().date().isoformat(),
-                    "cadastral_number": extract_cadastral_number(details["address"]),
-                    "debt_period_from": "",
+                    "cadastral_number": (
+                        details["cadastral_number"]
+                        or extract_cadastral_number(details["address"])
+                    ),
+                    "debt_period_from": DEFAULT_DEBT_PERIOD_START.isoformat(),
                     "debt_period_to": calculation_date.isoformat(),
                     "charge_basis": env("TSN_CLAIM_BASIS", ""),
                 }
@@ -781,7 +786,7 @@ def create_app():
                     claim_missing.append("адрес участка")
                 if not claim_defaults["cadastral_number"]:
                     claim_missing.append("кадастровый номер")
-                claim_missing.extend(("исходящий номер претензии", "начало периода задолженности"))
+                claim_missing.append("исходящий номер претензии")
                 if not claim_defaults["charge_basis"]:
                     claim_missing.append("дата и номер решения общего собрания об обязательных платежах")
         except Exception as exc:
@@ -808,6 +813,7 @@ def create_app():
                     OwnerPlot.account,
                     OwnerPlot.owner,
                     Plot.address,
+                    Plot.cadastral_number,
                     Balance.debt,
                     Balance.penalty,
                     Balance.overpayment,
@@ -840,6 +846,7 @@ def create_app():
             debt_period_from = parse_iso_date(
                 request.args.get("debt_period_from"),
                 "Период задолженности с",
+                default=DEFAULT_DEBT_PERIOD_START,
             )
             debt_period_to = parse_iso_date(
                 request.args.get("debt_period_to"),
@@ -858,6 +865,7 @@ def create_app():
             plot_address=details["address"],
             cadastral_number=(
                 request.args.get("cadastral_number", "").strip()
+                or details["cadastral_number"]
                 or extract_cadastral_number(details["address"])
             ),
             claim_number=request.args.get("claim_number", "").strip(),

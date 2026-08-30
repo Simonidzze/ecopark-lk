@@ -48,6 +48,7 @@ class Plot(Base):
     plot_number: Mapped[str] = mapped_column(String(64), nullable=False)
     account: Mapped[str] = mapped_column(String(64), nullable=False)
     address: Mapped[str] = mapped_column(String(500), nullable=False)
+    cadastral_number: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     organization_id: Mapped[str] = mapped_column(String(64), nullable=False)
     organization: Mapped[str] = mapped_column(String(255), nullable=False)
     sync_run_id: Mapped[int] = mapped_column(Integer, nullable=False)

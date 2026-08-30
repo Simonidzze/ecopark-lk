@@ -67,6 +67,8 @@ class ClaimDocumentTest(unittest.TestCase):
         self.assertIn("Иванов Иван Иванович", document_xml)
         self.assertIn("12 345 руб. 67 коп.", document_xml)
         self.assertIn("54:19:0123456:42", document_xml)
+        self.assertIn("в указанном ниже размере", document_xml)
+        self.assertNotIn("Сведения для сверки приведены ниже", document_xml)
         self.assertIn("<w:pageBreakBefore/>", document_xml)
         self.assertNotIn('<w:br w:type="page"/>', document_xml)
         self.assertIn('<w:updateFields w:val="true"/>', settings_xml)
@@ -84,7 +86,8 @@ class ClaimDownloadRouteTest(unittest.TestCase):
                     id="plot-1",
                     plot_number="42А",
                     account="000042",
-                    address="Новосибирская область, кадастровый № 54:19:0123456:42",
+                    address="Новосибирская область, участок 42А",
+                    cadastral_number="54:19:0123456:42",
                     organization_id="org-1",
                     organization="ТСН «МИКРОРАЙОН ЭКОПАРК»",
                     sync_run_id=1,
@@ -142,7 +145,6 @@ class ClaimDownloadRouteTest(unittest.TestCase):
                 query_string={
                     "claim_number": "17/26",
                     "claim_date": "2026-08-29",
-                    "debt_period_from": "2026-01-01",
                     "debt_period_to": "2026-08-28",
                 },
             )
@@ -154,6 +156,7 @@ class ClaimDownloadRouteTest(unittest.TestCase):
             xml = document.read("word/document.xml").decode("utf-8")
         self.assertIn("Иванов Иван Иванович", xml)
         self.assertIn("54:19:0123456:42", xml)
+        self.assertIn("с 01.10.2025 по 28.08.2026", xml)
         self.assertIn("12 345 руб. 67 коп.", xml)
         self.assertIn("не начислены", xml)
         self.assertNotIn("{{", xml)
