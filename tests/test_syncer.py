@@ -14,7 +14,10 @@ class PlotSyncTest(unittest.TestCase):
                     "id": "plot-1",
                     "plot_number": "42А",
                     "account": "000042",
-                    "address": "Новосибирская область, участок 42А",
+                    "address": (
+                        r"Российская Федерация, Новосибирская область, "
+                        r"микрорайон \Экопарк\\\", з/у № 42А\""
+                    ),
                     "cadastral_number": "this field must be ignored",
                     "organization_id": "org-1",
                     "organization": "ТСН «МИКРОРАЙОН ЭКОПАРК»",
@@ -27,6 +30,11 @@ class PlotSyncTest(unittest.TestCase):
 
         rows = upsert_many.call_args.args[2]
         self.assertNotIn("cadastral_number", rows[0])
+        self.assertEqual(
+            rows[0]["address"],
+            "Российская Федерация, Новосибирская область, "
+            "микрорайон Экопарк, з/у № 42А",
+        )
         self.assertEqual(
             upsert_many.call_args.kwargs["preserve_columns"],
             ("cadastral_number",),

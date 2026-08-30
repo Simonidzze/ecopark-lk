@@ -55,13 +55,17 @@ def sync_owners(session, snapshot, run_id, synced_at):
     upsert_many(session, Owner, rows)
 
 
+def clean_plot_address(value):
+    return text(value).replace("\\", "").replace('"', "").strip()
+
+
 def sync_plots(session, snapshot, run_id, synced_at):
     rows = [
         {
             "id": text(item.get("id")),
             "plot_number": text(item.get("plot_number")),
             "account": text(item.get("account")),
-            "address": text(item.get("address")),
+            "address": clean_plot_address(item.get("address")),
             "organization_id": text(item.get("organization_id")),
             "organization": text(item.get("organization")),
             "sync_run_id": run_id,
