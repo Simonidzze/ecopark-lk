@@ -1,7 +1,7 @@
 from sqlalchemy import delete
 
 from .db import make_session_factory, upsert_many
-from .models import Accrual, Balance, Expense, MessengerBinding, Owner, OwnerPlot, Payment, Plot, SyncRun
+from .models import Accrual, Balance, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, SyncRun
 from .utils import now_utc_naive, parse_datetime, parse_decimal, text
 
 
@@ -211,6 +211,32 @@ def sync_expenses(session, snapshot, run_id, synced_at):
     upsert_many(session, Expense, rows)
 
 
+def sync_incomes(session, snapshot, run_id, synced_at):
+    rows = [
+        {
+            "id": text(item.get("id")),
+            "document_id": text(item.get("document_id")),
+            "document": text(item.get("document")),
+            "date": parse_datetime(item.get("date")),
+            "number": text(item.get("number")),
+            "income_category": text(item.get("income_category")),
+            "counterparty_id": text(item.get("counterparty_id")),
+            "counterparty": text(item.get("counterparty")),
+            "purpose": text(item.get("purpose")),
+            "amount": parse_decimal(item.get("amount")),
+            "currency": text(item.get("currency") or "RUB"),
+            "organization_id": text(item.get("organization_id")),
+            "organization": text(item.get("organization")),
+            "source": text(item.get("source")),
+            "sync_run_id": run_id,
+            "synced_at": synced_at,
+        }
+        for item in snapshot.get("incomes", [])
+        if item.get("id")
+    ]
+    upsert_many(session, Income, rows)
+
+
 def delete_stale_rows(session, run_id, models=SYNC_MODELS):
     for model in reversed(models):
         session.execute(delete(model).where(model.sync_run_id != run_id))
@@ -218,6 +244,8 @@ def delete_stale_rows(session, run_id, models=SYNC_MODELS):
 
 def synced_models_for_snapshot(snapshot):
     models = list(SYNC_MODELS)
+    if "incomes" in snapshot:
+        models.append(Income)
     if "expenses" in snapshot:
         models.append(Expense)
     return tuple(models)
@@ -238,6 +266,8 @@ def sync_snapshot(snapshot):
             sync_messenger_bindings(session, snapshot, run_id, synced_at)
             sync_payments(session, snapshot, run_id, synced_at)
             sync_accruals(session, snapshot, run_id, synced_at)
+            if "incomes" in snapshot:
+                sync_incomes(session, snapshot, run_id, synced_at)
             if "expenses" in snapshot:
                 sync_expenses(session, snapshot, run_id, synced_at)
             delete_stale_rows(session, run_id, synced_models_for_snapshot(snapshot))
@@ -249,6 +279,8 @@ def sync_snapshot(snapshot):
             raise
 
     counts = {model.__tablename__: len(snapshot.get(model.__tablename__, [])) for model in SYNC_MODELS}
+    if "incomes" in snapshot:
+        counts["incomes"] = len(snapshot["incomes"])
     if "expenses" in snapshot:
         counts["expenses"] = len(snapshot["expenses"])
 

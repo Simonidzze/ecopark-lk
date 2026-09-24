@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Задолженность по месяцам - Ecopark LK Admin{% endblock %}
+{% block title %}Доходы и задолженность по месяцам - Ecopark LK Admin{% endblock %}
 
 {% block actions %}
   <a class="button secondary" href="{{ url_for('debts') }}">К участкам</a>
@@ -35,12 +35,13 @@
   <div class="message" style="margin-bottom: 16px;">
     Остатки показаны на конец каждого завершённого месяца. Расчёт выполнен от текущих остатков назад
     по начислениям и платежам{% if as_of %} по данным на {{ as_of.strftime("%d.%m.%Y %H:%M") }}{% endif %}.
+    Прочие доходы входят только в денежный итог и не меняют задолженность собственников.
     Пени не включены, так как история их изменения в базе не хранится.
   </div>
 
   <section class="section">
     <div class="section-head">
-      <h2>Задолженность по месяцам</h2>
+      <h2>Доходы и задолженность по месяцам</h2>
       <span class="muted">Периодов: {{ rows|length }}</span>
     </div>
     <div class="table-scroll">
@@ -49,7 +50,9 @@
           <tr>
             <th>Месяц</th>
             <th class="num">Начислено</th>
-            <th class="num">Оплачено</th>
+            <th class="num">Платежи собственников</th>
+            <th class="num">Прочие доходы</th>
+            <th class="num">Всего доходов</th>
             <th class="num">Долг на конец месяца</th>
             <th class="num">Изменение долга</th>
             <th class="num">Переплата</th>
@@ -62,6 +65,8 @@
               <td>{{ row.period_end.strftime("%m.%Y") }}</td>
               <td class="num">{{ "%.2f"|format(row.accruals or 0) }}</td>
               <td class="num">{{ "%.2f"|format(row.payments or 0) }}</td>
+              <td class="num">{{ "%.2f"|format(row.other_incomes or 0) }}</td>
+              <td class="num">{{ "%.2f"|format(row.total_incomes or 0) }}</td>
               <td class="num">{{ "%.2f"|format(row.debt or 0) }}</td>
               <td class="num">
                 {% if row.debt_change is not none %}
@@ -75,7 +80,7 @@
             </tr>
           {% else %}
             <tr>
-              <td colspan="7" class="muted">Нет данных за завершённые месяцы</td>
+              <td colspan="9" class="muted">Нет данных за завершённые месяцы</td>
             </tr>
           {% endfor %}
         </tbody>

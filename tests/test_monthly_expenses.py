@@ -45,6 +45,20 @@ class MonthlyExpenseReportTest(unittest.TestCase):
         self.assertEqual(summary["cash_period_from"], datetime(2025, 10, 8))
         self.assertEqual(summary["cash_period_to"], datetime(2026, 9, 23))
 
+    def test_includes_additional_incomes_in_cash_balance(self):
+        summary = build_cash_balance_summary(
+            Decimal("1000"),
+            Decimal("400"),
+            income_total=Decimal("125"),
+            income_from=datetime(2026, 1, 5),
+            income_to=datetime(2026, 2, 5),
+        )
+
+        self.assertEqual(summary["total_incomes"], Decimal("1125"))
+        self.assertEqual(summary["cash_balance"], Decimal("725"))
+        self.assertEqual(summary["cash_period_from"], datetime(2026, 1, 5))
+        self.assertEqual(summary["cash_period_to"], datetime(2026, 2, 5))
+
 
 class MonthlyExpenseRouteTest(unittest.TestCase):
     def test_shows_monthly_expense_tab(self):

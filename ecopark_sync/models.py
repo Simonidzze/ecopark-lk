@@ -204,6 +204,34 @@ class Accrual(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class Income(Base):
+    __tablename__ = "incomes"
+    __table_args__ = (
+        Index("idx_incomes_date", "date"),
+        Index("idx_incomes_document_id", "document_id"),
+        Index("idx_incomes_category", "income_category"),
+        Index("idx_incomes_counterparty", "counterparty"),
+        Index("idx_incomes_sync_run_id", "sync_run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    document_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    document: Mapped[str] = mapped_column(String(255), nullable=False)
+    date: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    number: Mapped[str] = mapped_column(String(64), nullable=False)
+    income_category: Mapped[str] = mapped_column(String(255), nullable=False)
+    counterparty_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    counterparty: Mapped[str] = mapped_column(String(255), nullable=False)
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
+    organization_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(128), nullable=False)
+    sync_run_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class Expense(Base):
     __tablename__ = "expenses"
     __table_args__ = (

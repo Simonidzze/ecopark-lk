@@ -39,6 +39,10 @@ class MonthlyDebtReportTest(unittest.TestCase):
             accruals,
             payments,
             as_of=datetime(2026, 4, 15),
+            income_rows=[
+                (datetime(2026, 2, 5), Decimal("25")),
+                (datetime(2026, 4, 5), Decimal("999")),
+            ],
         )
 
         self.assertEqual([row["month"] for row in rows], ["2026-03", "2026-02", "2026-01"])
@@ -47,6 +51,8 @@ class MonthlyDebtReportTest(unittest.TestCase):
         self.assertEqual(rows[0]["debtors"], 1)
         self.assertEqual(rows[1]["accruals"], Decimal("50"))
         self.assertEqual(rows[1]["payments"], Decimal("60"))
+        self.assertEqual(rows[1]["other_incomes"], Decimal("25"))
+        self.assertEqual(rows[1]["total_incomes"], Decimal("85"))
         self.assertEqual(rows[1]["debt_change"], Decimal("10"))
         self.assertEqual(rows[2]["debt"], Decimal("110"))
         self.assertEqual(rows[2]["debtors"], 2)

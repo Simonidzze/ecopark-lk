@@ -29,7 +29,7 @@ from .expense_report import (
     load_monthly_expense_report,
     render_expenses_xlsx,
 )
-from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
+from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
 
@@ -44,6 +44,7 @@ COUNT_MODELS = (
     ("call_attempts", "Звонки", CallAttempt),
     ("payments", "Платежи", Payment),
     ("accruals", "Начисления", Accrual),
+    ("incomes", "Прочие доходы", Income),
     ("expenses", "Расходы", Expense),
     ("pretrial_claims", "Досудебные претензии", PretrialClaim),
 )
@@ -70,13 +71,18 @@ def build_cash_balance_summary(
     payment_to=None,
     expense_from=None,
     expense_to=None,
+    income_total=0,
+    income_from=None,
+    income_to=None,
 ):
-    period_from_values = [value for value in (payment_from, expense_from) if value]
-    period_to_values = [value for value in (payment_to, expense_to) if value]
+    period_from_values = [value for value in (payment_from, income_from, expense_from) if value]
+    period_to_values = [value for value in (payment_to, income_to, expense_to) if value]
     payments = decimal_value(payment_total)
+    incomes = decimal_value(income_total)
     expenses = decimal_value(expense_total)
     return {
-        "cash_balance": payments - expenses,
+        "cash_balance": payments + incomes - expenses,
+        "total_incomes": payments + incomes,
         "cash_period_from": min(period_from_values) if period_from_values else None,
         "cash_period_to": max(period_to_values) if period_to_values else None,
     }
@@ -108,7 +114,7 @@ def iter_month_ends(first_value, last_value):
         current = month_end(current + timedelta(days=1))
 
 
-def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of):
+def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of, income_rows=()):
     """Reconstruct principal balances at completed month ends from the current snapshot."""
     as_of_date = date_value(as_of)
     report_end = as_of_date.replace(day=1) - timedelta(days=1)
@@ -125,6 +131,7 @@ def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of
     operations = []
     accruals_by_month = defaultdict(Decimal)
     payments_by_month = defaultdict(Decimal)
+    incomes_by_month = defaultdict(Decimal)
     first_operation_date = None
 
     for owner_plot_id, operation_date, amount in accrual_rows:
@@ -144,6 +151,14 @@ def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of
         amount = decimal_value(amount)
         operations.append((operation_date, owner_plot_id, amount, "payment"))
         payments_by_month[month_key(operation_date)] += amount
+        if first_operation_date is None or operation_date < first_operation_date:
+            first_operation_date = operation_date
+
+    for operation_date, amount in income_rows:
+        operation_date = date_value(operation_date)
+        if operation_date is None or operation_date > as_of_date:
+            continue
+        incomes_by_month[month_key(operation_date)] += decimal_value(amount)
         if first_operation_date is None or operation_date < first_operation_date:
             first_operation_date = operation_date
 
@@ -178,6 +193,8 @@ def build_monthly_debt_report(owner_plot_rows, accrual_rows, payment_rows, as_of
                 "period_end": period_end,
                 "accruals": accruals_by_month[key],
                 "payments": payments_by_month[key],
+                "other_incomes": incomes_by_month[key],
+                "total_incomes": payments_by_month[key] + incomes_by_month[key],
                 "debt": debt,
                 "overpayment": overpayment,
                 "net_balance": debt - overpayment,
@@ -213,6 +230,7 @@ def load_monthly_debt_report():
         payment_rows = session.execute(
             select(Payment.owner_plot_id, Payment.date, Payment.amount)
         ).all()
+        income_rows = session.execute(select(Income.date, Income.amount)).all()
         as_of = session.scalar(
             select(func.max(SyncRun.source_generated_at)).where(SyncRun.status == "ok")
         )
@@ -224,6 +242,7 @@ def load_monthly_debt_report():
         accrual_rows,
         payment_rows,
         as_of,
+        income_rows,
     )
     latest = rows[0] if rows else None
     return rows, latest, as_of
@@ -533,6 +552,8 @@ def create_app():
             "debt": Decimal("0"),
             "overpayment": Decimal("0"),
             "payments": Decimal("0"),
+            "incomes": Decimal("0"),
+            "total_incomes": Decimal("0"),
             "accruals": Decimal("0"),
             "expenses": Decimal("0"),
             "cash_balance": Decimal("0"),
@@ -566,10 +587,18 @@ def create_app():
                         func.max(Expense.date),
                     )
                 ).one()
+                income_summary = session.execute(
+                    select(
+                        func.coalesce(func.sum(Income.amount), 0),
+                        func.min(Income.date),
+                        func.max(Income.date),
+                    )
+                ).one()
                 totals = {
                     "debt": session.scalar(select(func.coalesce(func.sum(Balance.debt), 0))) or Decimal("0"),
                     "overpayment": session.scalar(select(func.coalesce(func.sum(Balance.overpayment), 0))) or Decimal("0"),
                     "payments": payment_summary[0] or Decimal("0"),
+                    "incomes": income_summary[0] or Decimal("0"),
                     "accruals": session.scalar(select(func.coalesce(func.sum(Accrual.amount), 0))) or Decimal("0"),
                     "expenses": expense_summary[0] or Decimal("0"),
                 }
@@ -581,6 +610,9 @@ def create_app():
                         payment_summary[2],
                         expense_summary[1],
                         expense_summary[2],
+                        income_total=income_summary[0],
+                        income_from=income_summary[1],
+                        income_to=income_summary[2],
                     )
                 )
         except Exception as exc:
@@ -650,6 +682,43 @@ def create_app():
             stats=stats,
             categories=categories,
             filters=filters,
+            as_of=as_of,
+            db_error=db_error,
+        )
+
+    @app.get("/admin/incomes")
+    def incomes():
+        db_error = None
+        rows = []
+        categories = []
+        total = Decimal("0")
+        as_of = None
+
+        try:
+            Session = make_session_factory()
+            with Session() as session:
+                categories = session.execute(
+                    select(
+                        Income.income_category,
+                        func.count(Income.id),
+                        func.coalesce(func.sum(Income.amount), 0),
+                    )
+                    .group_by(Income.income_category)
+                    .order_by(Income.income_category)
+                ).all()
+                rows = session.scalars(
+                    select(Income).order_by(Income.date.desc(), Income.number.desc(), Income.id)
+                ).all()
+                total = sum((Decimal(row.amount or 0) for row in rows), Decimal("0"))
+                as_of = session.scalar(select(func.max(Income.synced_at)))
+        except Exception as exc:
+            db_error = str(exc)
+
+        return render_template(
+            "incomes.html",
+            rows=rows,
+            categories=categories,
+            total=total,
             as_of=as_of,
             db_error=db_error,
         )

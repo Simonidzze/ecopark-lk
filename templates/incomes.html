@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block title %}Прочие доходы - Ecopark LK Admin{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или таблица доходов ещё не создана: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="metrics" aria-label="Статистика прочих доходов">
+    <div class="metric">
+      <div class="label">Операций</div>
+      <div class="value">{{ rows|length }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Сумма</div>
+      <div class="value">{{ "%.2f"|format(total or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Категорий</div>
+      <div class="value">{{ categories|length }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Обновлено</div>
+      <div class="value">{{ as_of.strftime("%d.%m.%Y") if as_of else "—" }}</div>
+    </div>
+  </section>
+
+  <section class="section" style="margin-bottom: 16px;">
+    <div class="section-head">
+      <h2>По категориям</h2>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Категория</th>
+            <th class="num">Операций</th>
+            <th class="num">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for category, count, amount in categories %}
+            <tr>
+              <td>{{ category }}</td>
+              <td class="num">{{ count }}</td>
+              <td class="num">{{ "%.2f"|format(amount or 0) }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="muted">Доходов пока нет</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Операции</h2>
+      <span class="muted">Строк: {{ rows|length }}</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Документ</th>
+            <th>Категория</th>
+            <th>Контрагент</th>
+            <th>Назначение</th>
+            <th class="num">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.date.strftime("%d.%m.%Y") if row.date else "—" }}</td>
+              <td>{{ row.document or "—" }}{% if row.number %}<br><span class="muted">№ {{ row.number }}</span>{% endif %}</td>
+              <td>{{ row.income_category or "—" }}</td>
+              <td>{{ row.counterparty or "—" }}</td>
+              <td>{{ row.purpose or "—" }}</td>
+              <td class="num">{{ "%.2f"|format(row.amount or 0) }} {{ row.currency or "" }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">После синхронизации выбранные доходы появятся здесь автоматически.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

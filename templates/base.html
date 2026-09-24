@@ -170,6 +170,10 @@
       grid-template-columns: repeat(6, minmax(0, 1fr));
     }
 
+    .metrics.metrics-seven {
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
     .metric,
     .section {
       border: 1px solid var(--border);
@@ -314,6 +318,7 @@
       .metrics,
       .metrics.metrics-five,
       .metrics.metrics-six,
+      .metrics.metrics-seven,
       .grid,
       .form-grid { grid-template-columns: 1fr; }
 
@@ -337,6 +342,7 @@
           <a href="{{ url_for('debts') }}" class="{% if request.endpoint in ['debts', 'plot_detail'] %}active{% endif %}">Участки</a>
           <a href="{{ url_for('monthly_debts') }}" class="{% if request.endpoint == 'monthly_debts' %}active{% endif %}">По месяцам</a>
           <a href="{{ url_for('debtors') }}" class="{% if request.endpoint == 'debtors' %}active{% endif %}">Должники</a>
+          <a href="{{ url_for('incomes') }}" class="{% if request.endpoint == 'incomes' %}active{% endif %}">Прочие доходы</a>
           <a href="{{ url_for('expenses') }}" class="{% if request.endpoint in ['expenses', 'expense_report_xlsx'] %}active{% endif %}">Расходы</a>
           <a href="{{ url_for('monthly_expenses') }}" class="{% if request.endpoint == 'monthly_expenses' %}active{% endif %}">Расходы по месяцам</a>
           <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>

@@ -23,12 +23,12 @@
     <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
   {% endif %}
 
-  <section class="metrics metrics-six" aria-label="Итоги">
+  <section class="metrics metrics-seven" aria-label="Итоги">
     <div class="metric">
       <div class="label">Итоговый баланс</div>
       <div class="value {% if totals.cash_balance < 0 %}negative{% endif %}">{{ "%+.2f"|format(totals.cash_balance) }}</div>
       <div class="note">
-        Поступления − расходы{% if totals.cash_period_from %}, с {{ totals.cash_period_from.strftime("%d.%m.%Y") }}{% endif %}
+        Платежи + прочие доходы − расходы{% if totals.cash_period_from %}, с {{ totals.cash_period_from.strftime("%d.%m.%Y") }}{% endif %}
       </div>
     </div>
     <div class="metric">
@@ -42,6 +42,10 @@
     <div class="metric">
       <div class="label">Платежи</div>
       <div class="value">{{ "%.2f"|format(totals.payments) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Прочие доходы</div>
+      <div class="value">{{ "%.2f"|format(totals.incomes) }}</div>
     </div>
     <div class="metric">
       <div class="label">Начисления</div>
