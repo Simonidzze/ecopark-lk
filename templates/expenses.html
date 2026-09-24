@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Расходы - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <form class="toolbar" method="get" action="{{ url_for('expenses') }}">
+    <input class="input" type="date" name="date_from" value="{{ filters.date_from }}" aria-label="Дата с">
+    <input class="input" type="date" name="date_to" value="{{ filters.date_to }}" aria-label="Дата по">
+    <select class="input" name="category" aria-label="Статья расхода">
+      <option value="">Все статьи</option>
+      {% for category in categories %}
+        <option value="{{ category }}" {% if filters.category == category %}selected{% endif %}>{{ category }}</option>
+      {% endfor %}
+    </select>
+    <input class="input" type="search" name="q" value="{{ filters.q }}" placeholder="Документ, контрагент, назначение">
+    <button class="button" type="submit">Показать</button>
+    <a class="button secondary" href="{{ url_for('monthly_expenses') }}">По месяцам</a>
+    <a
+      class="button secondary"
+      href="{{ url_for('expense_report_xlsx', date_from=filters.date_from, date_to=filters.date_to, category=filters.category, q=filters.q) }}"
+    >Скачать Excel</a>
+  </form>
+{% endblock %}
+
+{% block content %}
+  {% if db_error %}
+    <div class="message error">MySQL недоступен или таблица расходов ещё не создана: {{ db_error }}</div>
+  {% endif %}
+
+  <section class="metrics" aria-label="Статистика расходов">
+    <div class="metric">
+      <div class="label">Расходов</div>
+      <div class="value">{{ stats.count }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Сумма</div>
+      <div class="value">{{ "%.2f"|format(stats.total or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Статей</div>
+      <div class="value">{{ stats.categories }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Контрагентов</div>
+      <div class="value">{{ stats.counterparties }}</div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Расходы</h2>
+      <span class="muted">
+        Строк: {{ rows|length }}{% if as_of %} · обновлено {{ as_of.strftime("%d.%m.%Y %H:%M") }}{% endif %}
+      </span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Документ</th>
+            <th>Статья</th>
+            <th>Контрагент</th>
+            <th>Назначение</th>
+            <th class="num">Сумма</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.date.strftime("%d.%m.%Y") if row.date else "—" }}</td>
+              <td>{{ row.document or "—" }}{% if row.number %}<br><span class="muted">№ {{ row.number }}</span>{% endif %}</td>
+              <td>{{ row.expense_category or "Без статьи" }}</td>
+              <td>{{ row.counterparty or "—" }}</td>
+              <td>{{ row.purpose or "—" }}</td>
+              <td class="num">{{ "%.2f"|format(row.amount or 0) }} {{ row.currency or "" }}</td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="6" class="muted">
+                {% if filters.q or filters.category or filters.date_from or filters.date_to %}
+                  По выбранным фильтрам расходов нет
+                {% else %}
+                  Расходов пока нет. После добавления массива expenses в снимок 1С они появятся здесь автоматически.
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

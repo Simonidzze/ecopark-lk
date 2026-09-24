@@ -23,7 +23,14 @@ from .claims import (
 )
 from .config import env, require_dependency
 from .db import make_session_factory
-from .models import Accrual, Balance, CallAttempt, CallCampaign, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
+from .expense_report import (
+    expense_filter_values,
+    load_expense_report,
+    load_monthly_expense_report,
+    render_expenses_xlsx,
+)
+from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
+from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
 
 
@@ -37,6 +44,7 @@ COUNT_MODELS = (
     ("call_attempts", "Звонки", CallAttempt),
     ("payments", "Платежи", Payment),
     ("accruals", "Начисления", Accrual),
+    ("expenses", "Расходы", Expense),
     ("pretrial_claims", "Досудебные претензии", PretrialClaim),
 )
 
@@ -53,6 +61,25 @@ def plot_sort_key(row):
 
 def decimal_value(value):
     return Decimal(value or 0)
+
+
+def build_cash_balance_summary(
+    payment_total,
+    expense_total,
+    payment_from=None,
+    payment_to=None,
+    expense_from=None,
+    expense_to=None,
+):
+    period_from_values = [value for value in (payment_from, expense_from) if value]
+    period_to_values = [value for value in (payment_to, expense_to) if value]
+    payments = decimal_value(payment_total)
+    expenses = decimal_value(expense_total)
+    return {
+        "cash_balance": payments - expenses,
+        "cash_period_from": min(period_from_values) if period_from_values else None,
+        "cash_period_to": max(period_to_values) if period_to_values else None,
+    }
 
 
 def month_key(value):
@@ -507,6 +534,10 @@ def create_app():
             "overpayment": Decimal("0"),
             "payments": Decimal("0"),
             "accruals": Decimal("0"),
+            "expenses": Decimal("0"),
+            "cash_balance": Decimal("0"),
+            "cash_period_from": None,
+            "cash_period_to": None,
         }
 
         try:
@@ -521,12 +552,37 @@ def create_app():
                     for name, label, model in COUNT_MODELS
                 ]
                 runs = session.scalars(select(SyncRun).order_by(SyncRun.started_at.desc()).limit(20)).all()
+                payment_summary = session.execute(
+                    select(
+                        func.coalesce(func.sum(Payment.amount), 0),
+                        func.min(Payment.date),
+                        func.max(Payment.date),
+                    )
+                ).one()
+                expense_summary = session.execute(
+                    select(
+                        func.coalesce(func.sum(Expense.amount), 0),
+                        func.min(Expense.date),
+                        func.max(Expense.date),
+                    )
+                ).one()
                 totals = {
                     "debt": session.scalar(select(func.coalesce(func.sum(Balance.debt), 0))) or Decimal("0"),
                     "overpayment": session.scalar(select(func.coalesce(func.sum(Balance.overpayment), 0))) or Decimal("0"),
-                    "payments": session.scalar(select(func.coalesce(func.sum(Payment.amount), 0))) or Decimal("0"),
+                    "payments": payment_summary[0] or Decimal("0"),
                     "accruals": session.scalar(select(func.coalesce(func.sum(Accrual.amount), 0))) or Decimal("0"),
+                    "expenses": expense_summary[0] or Decimal("0"),
                 }
+                totals.update(
+                    build_cash_balance_summary(
+                        payment_summary[0],
+                        expense_summary[0],
+                        payment_summary[1],
+                        payment_summary[2],
+                        expense_summary[1],
+                        expense_summary[2],
+                    )
+                )
         except Exception as exc:
             db_error = str(exc)
 
@@ -569,6 +625,75 @@ def create_app():
 
         return render_template("debts.html", rows=rows, search=search, db_error=db_error)
 
+    @app.get("/admin/expenses")
+    def expenses():
+        db_error = None
+        rows = []
+        categories = []
+        as_of = None
+        stats = {
+            "count": 0,
+            "total": Decimal("0"),
+            "categories": 0,
+            "counterparties": 0,
+        }
+        filters = expense_filter_values(request.args)
+
+        try:
+            rows, stats, categories, as_of = load_expense_report(filters)
+        except Exception as exc:
+            db_error = str(exc)
+
+        return render_template(
+            "expenses.html",
+            rows=rows,
+            stats=stats,
+            categories=categories,
+            filters=filters,
+            as_of=as_of,
+            db_error=db_error,
+        )
+
+    @app.get("/admin/expenses/report.xlsx")
+    def expense_report_xlsx():
+        filters = expense_filter_values(request.args)
+        rows, stats, _categories, as_of = load_expense_report(filters)
+        report = render_expenses_xlsx(rows, stats, filters, as_of)
+        report_date = (as_of or datetime.now()).strftime("%Y-%m-%d")
+        return send_file(
+            report,
+            mimetype=XLSX_CONTENT_TYPE,
+            as_attachment=True,
+            download_name=f"expenses-{report_date}.xlsx",
+        )
+
+    @app.get("/admin/expenses/monthly")
+    def monthly_expenses():
+        db_error = None
+        rows = []
+        latest = None
+        as_of = None
+        stats = {
+            "months": 0,
+            "total": Decimal("0"),
+            "average": Decimal("0"),
+            "operations": 0,
+        }
+
+        try:
+            rows, latest, stats, as_of = load_monthly_expense_report()
+        except Exception as exc:
+            db_error = str(exc)
+
+        return render_template(
+            "monthly_expenses.html",
+            rows=rows,
+            latest=latest,
+            stats=stats,
+            as_of=as_of,
+            db_error=db_error,
+        )
+
     @app.get("/admin/debtors")
     def debtors():
         db_error = None
@@ -592,6 +717,29 @@ def create_app():
             min_months=min_months,
             max_months=max_months,
             db_error=db_error,
+        )
+
+    @app.get("/admin/payments/report.xlsx")
+    def payment_report_xlsx():
+        scope = request.args.get("scope", "all").strip().lower()
+        if scope not in {"all", "stopped"}:
+            abort(400)
+
+        rows, stats, as_of, cutoff = load_payment_status_report(scope=scope)
+        report = render_payment_status_xlsx(
+            rows,
+            stats,
+            as_of,
+            cutoff,
+            scope=scope,
+        )
+        report_date = as_of.strftime("%Y-%m-%d")
+        report_scope = "all" if scope == "all" else "stopped"
+        return send_file(
+            report,
+            mimetype=XLSX_CONTENT_TYPE,
+            as_attachment=True,
+            download_name=f"payment-report-{report_scope}-{report_date}.xlsx",
         )
 
     @app.get("/admin/debts/monthly")
