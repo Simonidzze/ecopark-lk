@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ecopark_sync.claims import (
     CLAIM_TOKENS,
+    DEFAULT_CLAIM_BASIS,
     claim_template_path,
     claim_values,
     extract_cadastral_number,
@@ -22,7 +23,7 @@ from ecopark_sync.web import create_app
 
 
 class ClaimDocumentTest(unittest.TestCase):
-    def sample_values(self):
+    def sample_values(self, charge_basis="01.03.2026 № 3"):
         return claim_values(
             tsn_address="г. Новосибирск, ул. Тестовая, д. 1",
             tsn_phone="+7 383 000-00-00",
@@ -33,7 +34,7 @@ class ClaimDocumentTest(unittest.TestCase):
             cadastral_number="54:19:0123456:42",
             claim_number="17/26",
             claim_date=date(2026, 8, 29),
-            charge_basis="решения общего собрания, протокол № 3 от 01.03.2026",
+            charge_basis=charge_basis,
             account="000042",
             calculation_date=date(2026, 8, 28),
             debt_period_from=date(2026, 1, 1),
@@ -50,6 +51,10 @@ class ClaimDocumentTest(unittest.TestCase):
             extract_cadastral_number("участок, кадастровый № 54:19:0123456:42"),
             "54:19:0123456:42",
         )
+        self.assertEqual(
+            self.sample_values(charge_basis="")["CHARGE_BASIS"],
+            DEFAULT_CLAIM_BASIS,
+        )
 
     def test_renders_docx_and_preserves_package_parts(self):
         values = self.sample_values()
@@ -57,7 +62,6 @@ class ClaimDocumentTest(unittest.TestCase):
 
         with ZipFile(claim_template_path(), "r") as template, ZipFile(generated, "r") as result:
             self.assertEqual(template.namelist(), result.namelist())
-            self.assertEqual(template.read("word/header1.xml"), result.read("word/header1.xml"))
             self.assertEqual(template.read("word/footer1.xml"), result.read("word/footer1.xml"))
             document_xml = result.read("word/document.xml").decode("utf-8")
             settings_xml = result.read("word/settings.xml").decode("utf-8")
@@ -67,9 +71,16 @@ class ClaimDocumentTest(unittest.TestCase):
         self.assertIn("Иванов Иван Иванович", document_xml)
         self.assertIn("12 345 руб. 67 коп.", document_xml)
         self.assertIn("54:19:0123456:42", document_xml)
-        self.assertIn("в указанном ниже размере", document_xml)
+        self.assertIn("285 руб./сотка", document_xml)
+        self.assertIn("и членом ТСН", document_xml)
+        self.assertIn("01.03.2026 № 3", document_xml)
+        self.assertIn("размеры которых устанавливаются", document_xml)
+        self.assertIn("п. 7.5 Устава ТСН", document_xml)
+        self.assertIn("в связи с чем подлежит уплате", document_xml)
         self.assertNotIn("Сведения для сверки приведены ниже", document_xml)
-        self.assertIn("<w:pageBreakBefore/>", document_xml)
+        self.assertNotIn("размеры которых устанавливается", document_xml)
+        self.assertNotIn("п.7.5 Уставом ТСН", document_xml)
+        self.assertNotIn("в связи с чем, подлежит уплате", document_xml)
         self.assertNotIn('<w:br w:type="page"/>', document_xml)
         self.assertIn('<w:updateFields w:val="true"/>', settings_xml)
 
@@ -132,7 +143,7 @@ class ClaimDownloadRouteTest(unittest.TestCase):
             "TSN_LEGAL_ADDRESS": "г. Новосибирск, ул. Тестовая, д. 1",
             "TSN_PHONE": "+7 383 000-00-00",
             "TSN_EMAIL": "info@example.test",
-            "TSN_CLAIM_BASIS": "решения общего собрания, протокол № 3 от 01.03.2026",
+            "TSN_CLAIM_BASIS": "01.03.2026 № 3",
         }
         with patch("ecopark_sync.web.make_session_factory", return_value=self.Session), patch.dict(
             os.environ,

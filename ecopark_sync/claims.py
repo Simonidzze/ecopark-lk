@@ -9,6 +9,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DEFAULT_DEBT_PERIOD_START = date(2025, 10, 1)
+DEFAULT_CLAIM_BASIS = "01.10.2025"
 TOKEN_PATTERN = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
 CADASTRAL_NUMBER_PATTERN = re.compile(r"(?<!\d)(\d{2}:\d{2}:\d{6,7}:\d+)(?!\d)")
 
@@ -152,7 +153,7 @@ def claim_values(
         "CADASTRAL_NUMBER": cadastral_number or "не указан",
         "CLAIM_NUMBER": claim_number or "б/н",
         "CLAIM_DATE": format_ru_date(claim_date),
-        "CHARGE_BASIS": charge_basis or "решения общего собрания (реквизиты не указаны)",
+        "CHARGE_BASIS": charge_basis or DEFAULT_CLAIM_BASIS,
         "ACCOUNT": account or "не указан",
         "CALCULATION_DATE": format_short_date(calculation_date),
         "DEBT_PERIOD": format_debt_period(debt_period_from, debt_period_to),

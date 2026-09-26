@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 
 from .calls import import_call_report, normalize_phone
 from .claims import (
+    DEFAULT_CLAIM_BASIS,
     DEFAULT_DEBT_PERIOD_START,
     DOCX_CONTENT_TYPE,
     claim_values,
@@ -994,7 +995,10 @@ def create_app():
                     ),
                     "debt_period_from": DEFAULT_DEBT_PERIOD_START.isoformat(),
                     "debt_period_to": calculation_date.isoformat(),
-                    "charge_basis": env("TSN_CLAIM_BASIS", ""),
+                    "charge_basis": (
+                        env("TSN_CLAIM_BASIS", "").strip()
+                        or DEFAULT_CLAIM_BASIS
+                    ),
                 }
 
                 organization_fields = (
@@ -1011,8 +1015,6 @@ def create_app():
                     claim_missing.append("адрес участка")
                 if not claim_defaults["cadastral_number"]:
                     claim_missing.append("кадастровый номер")
-                if not claim_defaults["charge_basis"]:
-                    claim_missing.append("дата и номер решения общего собрания об обязательных платежах")
         except Exception as exc:
             db_error = str(exc)
 
@@ -1113,6 +1115,7 @@ def create_app():
                 charge_basis=(
                     request.form.get("charge_basis", "").strip()
                     or env("TSN_CLAIM_BASIS", "")
+                    or DEFAULT_CLAIM_BASIS
                 ),
                 account=details["account"],
                 calculation_date=calculation_date,
