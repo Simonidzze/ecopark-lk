@@ -1,4 +1,6 @@
 import os
+from pathlib import Path
+import subprocess
 import unittest
 from datetime import date, datetime
 from decimal import Decimal
@@ -14,6 +16,7 @@ from ecopark_sync.claims import (
     DEFAULT_CLAIM_BASIS,
     claim_template_path,
     claim_values,
+    convert_docx_to_pdf,
     extract_cadastral_number,
     format_ru_money,
     render_pretrial_claim,
@@ -84,6 +87,21 @@ class ClaimDocumentTest(unittest.TestCase):
         self.assertNotIn('<w:br w:type="page"/>', document_xml)
         self.assertIn('<w:updateFields w:val="true"/>', settings_xml)
 
+    def test_converts_docx_to_pdf_with_libreoffice(self):
+        def fake_run(command, **kwargs):
+            output_directory = Path(command[command.index("--outdir") + 1])
+            (output_directory / "claim.pdf").write_bytes(b"%PDF-1.7\n%%EOF\n")
+            return subprocess.CompletedProcess(command, 0, stdout="converted", stderr="")
+
+        with patch("ecopark_sync.claims.shutil.which", return_value="/usr/bin/soffice"), patch(
+            "ecopark_sync.claims.subprocess.run",
+            side_effect=fake_run,
+        ) as run:
+            result = convert_docx_to_pdf(BytesIO(b"PK\x03\x04test"), converter="soffice")
+
+        self.assertTrue(result.getvalue().startswith(b"%PDF-"))
+        self.assertIn("pdf:writer_pdf_Export", run.call_args.args[0])
+
 
 class ClaimDownloadRouteTest(unittest.TestCase):
     def setUp(self):
@@ -145,21 +163,26 @@ class ClaimDownloadRouteTest(unittest.TestCase):
             "TSN_EMAIL": "info@example.test",
             "TSN_CLAIM_BASIS": "01.03.2026 № 3",
         }
+        rendered_docx = []
+
+        def fake_convert(document, converter=None, timeout=120):
+            document.seek(0)
+            rendered_docx.append(document.read())
+            return BytesIO(b"%PDF-1.7\n%%EOF\n")
+
         with patch("ecopark_sync.web.make_session_factory", return_value=self.Session), patch.dict(
-            os.environ,
-            environment,
-            clear=False,
-        ):
+            os.environ, environment, clear=False
+        ), patch("ecopark_sync.claims.convert_docx_to_pdf", side_effect=fake_convert):
             client = create_app().test_client()
             response = client.post(
-                "/admin/plots/owner-plot-1/pretrial-claim.docx",
+                "/admin/plots/owner-plot-1/pretrial-claim.pdf",
                 data={
                     "claim_date": "2026-08-29",
                     "debt_period_to": "2026-08-28",
                 },
             )
             second_response = client.post(
-                "/admin/plots/owner-plot-1/pretrial-claim.docx",
+                "/admin/plots/owner-plot-1/pretrial-claim.pdf",
                 data={
                     "claim_date": "2026-08-30",
                     "debt_period_to": "2026-08-28",
@@ -168,10 +191,12 @@ class ClaimDownloadRouteTest(unittest.TestCase):
             history_response = client.get("/admin/plots/owner-plot-1")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.mimetype, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        self.assertEqual(response.mimetype, "application/pdf")
         self.assertIn("attachment", response.headers["Content-Disposition"])
         self.assertIn("n-1", response.headers["Content-Disposition"])
-        with ZipFile(BytesIO(response.data), "r") as document:
+        self.assertIn(".pdf", response.headers["Content-Disposition"])
+        self.assertTrue(response.data.startswith(b"%PDF-"))
+        with ZipFile(BytesIO(rendered_docx[0]), "r") as document:
             xml = document.read("word/document.xml").decode("utf-8")
         self.assertIn("Иванов Иван Иванович", xml)
         self.assertIn("Исх. № 1", xml)
@@ -182,7 +207,7 @@ class ClaimDownloadRouteTest(unittest.TestCase):
         self.assertNotIn("{{", xml)
 
         self.assertEqual(second_response.status_code, 200)
-        with ZipFile(BytesIO(second_response.data), "r") as document:
+        with ZipFile(BytesIO(rendered_docx[1]), "r") as document:
             second_xml = document.read("word/document.xml").decode("utf-8")
         self.assertIn("Исх. № 2", second_xml)
         self.assertIn("n-2", second_response.headers["Content-Disposition"])

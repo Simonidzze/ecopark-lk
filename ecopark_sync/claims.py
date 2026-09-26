@@ -1,13 +1,17 @@
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
 from io import BytesIO
+import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+from tempfile import TemporaryDirectory
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
 
-DOCX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+PDF_CONTENT_TYPE = "application/pdf"
 DEFAULT_DEBT_PERIOD_START = date(2025, 10, 1)
 DEFAULT_CLAIM_BASIS = "01.10.2025"
 TOKEN_PATTERN = re.compile(r"\{\{[A-Z][A-Z0-9_]*\}\}")
@@ -31,6 +35,10 @@ CLAIM_TOKENS = (
     "PENALTY_TEXT",
     "TOTAL_AMOUNT",
 )
+
+
+class ClaimPdfConversionError(RuntimeError):
+    pass
 
 
 def claim_template_path():
@@ -192,9 +200,84 @@ def render_pretrial_claim(values, template_path=None):
     return output
 
 
-def safe_claim_filename(plot_number, claim_date, claim_number=None):
+def convert_docx_to_pdf(document, converter=None, timeout=120):
+    converter_name = converter or os.environ.get("LIBREOFFICE_BINARY", "").strip()
+    if converter_name:
+        converter_path = shutil.which(converter_name)
+    else:
+        converter_path = shutil.which("soffice") or shutil.which("libreoffice")
+    if not converter_path:
+        raise ClaimPdfConversionError(
+            "LibreOffice не найден: установите soffice/libreoffice или задайте LIBREOFFICE_BINARY"
+        )
+
+    original_position = document.tell()
+    document.seek(0)
+    document_bytes = document.read()
+    document.seek(original_position)
+
+    with TemporaryDirectory(prefix="ecopark-claim-") as temporary_directory:
+        working_directory = Path(temporary_directory)
+        source_path = working_directory / "claim.docx"
+        output_path = working_directory / "claim.pdf"
+        profile_path = working_directory / "libreoffice-profile"
+        source_path.write_bytes(document_bytes)
+        profile_path.mkdir()
+
+        command = (
+            converter_path,
+            "--headless",
+            "--nologo",
+            "--nodefault",
+            "--nolockcheck",
+            "--nofirststartwizard",
+            f"-env:UserInstallation={profile_path.as_uri()}",
+            "--convert-to",
+            "pdf:writer_pdf_Export",
+            "--outdir",
+            str(working_directory),
+            str(source_path),
+        )
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ClaimPdfConversionError(
+                f"LibreOffice не завершил конвертацию за {timeout} секунд"
+            ) from exc
+        except OSError as exc:
+            raise ClaimPdfConversionError(f"Не удалось запустить LibreOffice: {exc}") from exc
+
+        if result.returncode != 0:
+            details = (result.stderr or result.stdout or "неизвестная ошибка").strip()
+            raise ClaimPdfConversionError(
+                f"LibreOffice завершил конвертацию с кодом {result.returncode}: {details}"
+            )
+        if not output_path.is_file():
+            details = (result.stderr or result.stdout or "PDF-файл не создан").strip()
+            raise ClaimPdfConversionError(f"LibreOffice не создал PDF: {details}")
+
+        pdf_bytes = output_path.read_bytes()
+        if not pdf_bytes.startswith(b"%PDF-"):
+            raise ClaimPdfConversionError("LibreOffice создал файл с некорректной сигнатурой PDF")
+
+    return BytesIO(pdf_bytes)
+
+
+def render_pretrial_claim_pdf(values, template_path=None, converter=None):
+    document = render_pretrial_claim(values, template_path=template_path)
+    return convert_docx_to_pdf(document, converter=converter)
+
+
+def safe_claim_filename(plot_number, claim_date, claim_number=None, extension="docx"):
     plot_slug = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_-]+", "-", str(plot_number or "").strip())
     plot_slug = plot_slug.strip("-") or "unknown"
     number_slug = re.sub(r"[^0-9A-Za-zА-Яа-яЁё_-]+", "-", str(claim_number or "").strip())
     number_suffix = f"-n-{number_slug.strip('-')}" if number_slug.strip("-") else ""
-    return f"pretenziya-uchastok-{plot_slug}{number_suffix}-{claim_date.isoformat()}.docx"
+    extension = re.sub(r"[^0-9A-Za-z]+", "", str(extension or "")) or "pdf"
+    return f"pretenziya-uchastok-{plot_slug}{number_suffix}-{claim_date.isoformat()}.{extension}"

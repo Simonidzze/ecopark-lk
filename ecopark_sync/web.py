@@ -13,13 +13,14 @@ from sqlalchemy import delete, func, select
 
 from .calls import import_call_report, normalize_phone
 from .claims import (
+    ClaimPdfConversionError,
     DEFAULT_CLAIM_BASIS,
     DEFAULT_DEBT_PERIOD_START,
-    DOCX_CONTENT_TYPE,
+    PDF_CONTENT_TYPE,
     claim_values,
     extract_cadastral_number,
     parse_iso_date,
-    render_pretrial_claim,
+    render_pretrial_claim_pdf,
     safe_claim_filename,
 )
 from .config import env, require_dependency
@@ -1029,7 +1030,7 @@ def create_app():
             db_error=db_error,
         )
 
-    @app.post("/admin/plots/<owner_plot_id>/pretrial-claim.docx")
+    @app.post("/admin/plots/<owner_plot_id>/pretrial-claim.pdf")
     def plot_pretrial_claim(owner_plot_id):
         Session = make_session_factory()
         with Session() as session:
@@ -1126,17 +1127,22 @@ def create_app():
                 penalty_basis="",
                 total_amount=total_amount,
             )
-            document = render_pretrial_claim(values)
+            try:
+                document = render_pretrial_claim_pdf(values)
+            except ClaimPdfConversionError:
+                app.logger.exception("Не удалось сформировать PDF досудебной претензии")
+                abort(503, description="Не удалось сформировать PDF претензии")
             session.commit()
 
         return send_file(
             document,
-            mimetype=DOCX_CONTENT_TYPE,
+            mimetype=PDF_CONTENT_TYPE,
             as_attachment=True,
             download_name=safe_claim_filename(
                 details["plot_number"],
                 claim_date,
                 issued_claim.number,
+                extension="pdf",
             ),
             max_age=0,
         )
