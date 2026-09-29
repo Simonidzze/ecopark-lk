@@ -1,5 +1,7 @@
 const http = require("http");
+const fs = require("fs");
 const net = require("net");
+const path = require("path");
 const QRCode = require("qrcode");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
@@ -7,6 +9,7 @@ const port = Number(process.env.PORT || 3000);
 const token = process.env.WHATSAPP_SERVICE_TOKEN || "";
 const dataPath = process.env.WHATSAPP_SESSION_PATH || "/data/whatsapp";
 const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+const sessionId = "ecopark";
 const gatewayIp = String(process.env.WHATSAPP_GATEWAY_IP || "").trim();
 const gatewayPort = Number(process.env.WHATSAPP_GATEWAY_PORT || "443");
 const gatewayHosts = String(process.env.WHATSAPP_GATEWAY_HOSTS || "web.whatsapp.com")
@@ -60,6 +63,25 @@ function readJson(req) {
   });
 }
 
+function removeStaleChromiumProfileLocks() {
+  const profilePath = path.join(dataPath, `session-${sessionId}`);
+  for (const name of ["SingletonCookie", "SingletonLock", "SingletonSocket"]) {
+    const lockPath = path.join(profilePath, name);
+    try {
+      // lstat also detects dangling symlinks left after a Docker container exits.
+      fs.lstatSync(lockPath);
+    } catch (error) {
+      if (error.code === "ENOENT") continue;
+      throw error;
+    }
+
+    // Only Chromium's process-lock artifacts are removed; the WhatsApp profile
+    // and its authenticated session remain intact.
+    fs.rmSync(lockPath, { force: true, recursive: true });
+    console.log(`Removed stale Chromium profile lock: ${name}`);
+  }
+}
+
 async function startClient() {
   if (gatewayIp && net.isIP(gatewayIp) === 0) {
     state = "error";
@@ -79,6 +101,15 @@ async function startClient() {
     console.error(lastError);
     return;
   }
+  try {
+    removeStaleChromiumProfileLocks();
+  } catch (error) {
+    state = "error";
+    lastError = `Не удалось удалить блокировку профиля Chromium: ${error.message}`;
+    console.error(lastError);
+    return;
+  }
+
   const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"];
   if (gatewayIp) {
     const gatewayAddress = net.isIP(gatewayIp) === 6
@@ -95,7 +126,7 @@ async function startClient() {
   account = null;
   lastError = null;
   const nextClient = new Client({
-    authStrategy: new LocalAuth({ clientId: "ecopark", dataPath }),
+    authStrategy: new LocalAuth({ clientId: sessionId, dataPath }),
     puppeteer: {
       executablePath: chromiumPath,
       headless: true,
