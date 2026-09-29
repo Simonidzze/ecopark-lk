@@ -213,6 +213,9 @@ def process_next_whatsapp_message(client=None, session_factory=None):
 
 
 def run_whatsapp_worker():
+    from .schema import ensure_whatsapp_schema
+
+    ensure_whatsapp_schema()
     client = WhatsAppClient()
     Session = make_session_factory()
     with Session() as session:

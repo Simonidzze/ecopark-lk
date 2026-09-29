@@ -1,13 +1,18 @@
 from sqlalchemy import inspect, text
 
 from .db import get_engine
-from .models import Base
+from .models import Base, WhatsAppMessage
 
 
 def init_schema():
     engine = get_engine()
     Base.metadata.create_all(engine)
     apply_lightweight_upgrades(engine)
+
+
+def ensure_whatsapp_schema():
+    """Create only the WhatsApp queue table without changing existing data."""
+    WhatsAppMessage.__table__.create(get_engine(), checkfirst=True)
 
 
 def apply_lightweight_upgrades(engine):

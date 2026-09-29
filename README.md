@@ -266,11 +266,13 @@ TSN_CLAIM_BASIS=01.10.2025
 неофициальные клиенты и может ограничить аккаунт, поэтому отправляйте документы
 только адресатам, которым ТСН вправе их направлять, и сохраняйте умеренный темп.
 
-Перед первым запуском создайте новую таблицу очереди и поднимите сервисы:
+В Docker Compose таблица `whatsapp_messages` создаётся автоматически при старте
+веб-приложения и worker через безопасный `CREATE TABLE IF NOT EXISTS`.
+
+Для запуска достаточно собрать и поднять сервисы:
 
 ```bash
 docker compose build
-docker compose run --rm ecopark-lk python ecopark_sync.py init-schema
 docker compose up -d
 ```
 
@@ -292,6 +294,7 @@ docker compose up -d
 
 ```env
 WHATSAPP_SERVICE_URL=http://whatsapp:3000
+WHATSAPP_AUTO_INIT_SCHEMA=true
 WHATSAPP_SERVICE_TOKEN=
 WHATSAPP_REQUEST_TIMEOUT_SECONDS=60
 WHATSAPP_QUEUE_POLL_SECONDS=5

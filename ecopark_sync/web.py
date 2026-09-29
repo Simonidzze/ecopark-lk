@@ -60,7 +60,6 @@ COUNT_MODELS = (
     ("incomes", "Прочие доходы", Income),
     ("expenses", "Расходы", Expense),
     ("pretrial_claims", "Досудебные претензии", PretrialClaim),
-    ("whatsapp_messages", "Сообщения WhatsApp", WhatsAppMessage),
 )
 
 
@@ -695,6 +694,14 @@ def create_app():
     template_folder = Path(__file__).resolve().parent.parent / "templates"
     app = Flask(__name__, template_folder=str(template_folder))
     app.secret_key = env("FLASK_SECRET_KEY", "dev-secret-change-me")
+
+    if env("WHATSAPP_AUTO_INIT_SCHEMA", "false").lower() in {"1", "true", "yes", "y"}:
+        try:
+            from .schema import ensure_whatsapp_schema
+
+            ensure_whatsapp_schema()
+        except Exception:
+            app.logger.exception("Не удалось автоматически создать таблицу WhatsApp")
 
     @app.get("/")
     def index():
