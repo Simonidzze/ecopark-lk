@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+
+{% block title %}WhatsApp - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button secondary" href="{{ url_for('debtors') }}">К должникам</a>
+{% endblock %}
+
+{% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="messages">
+        {% for category, message in messages %}<div class="message {{ category }}">{{ message }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
+  {% if db_error %}<div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>{% endif %}
+
+  <div class="message error" style="margin-bottom: 16px;">
+    Это неофициальное подключение через WhatsApp Web для личного номера. WhatsApp может ограничить такой аккаунт.
+    Используйте отправку только собственникам, которым ТСН вправе направлять документы, и не уменьшайте интервал очереди без необходимости.
+  </div>
+
+  <div class="grid" style="margin-bottom: 16px;">
+    <section class="section">
+      <div class="section-head">
+        <h2>Подключение WhatsApp</h2>
+        <span id="wa-state" class="status">Проверка…</span>
+      </div>
+      <div class="form-body" style="text-align: center;">
+        <div id="wa-account" class="muted">Ожидаем состояние сервиса</div>
+        <img id="wa-qr" alt="QR-код WhatsApp" hidden style="width: min(360px, 100%); margin: 14px auto; display: none;">
+        <p id="wa-help" class="muted">
+          Откройте WhatsApp на телефоне → Связанные устройства → Привязка устройства и отсканируйте QR-код.
+        </p>
+        <form method="post" action="{{ url_for('whatsapp_logout') }}" onsubmit="return confirm('Завершить текущую сессию WhatsApp?');">
+          <button class="button danger" type="submit">Выйти и привязать другой номер</button>
+        </form>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Очередь</h2></div>
+      <div class="form-body">
+        <div class="metrics" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0;">
+          <div class="metric"><div class="label">Ожидают</div><div class="value">{{ stats.get('queued', 0) }}</div></div>
+          <div class="metric"><div class="label">Отправляются</div><div class="value">{{ stats.get('processing', 0) }}</div></div>
+          <div class="metric"><div class="label">Отправлены</div><div class="value">{{ stats.get('sent', 0) }}</div></div>
+          <div class="metric"><div class="label">Ошибки</div><div class="value">{{ stats.get('failed', 0) }}</div></div>
+        </div>
+        {% if batch_id %}
+          <p class="muted">Показан пакет <code>{{ batch_id }}</code>. <a href="{{ url_for('whatsapp_admin') }}">Показать весь журнал</a>.</p>
+        {% endif %}
+      </div>
+    </section>
+  </div>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Журнал отправки</h2>
+      <span class="muted">Последние {{ messages|length }}</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Создано</th><th>Собственник / участок</th><th>Телефон</th><th>Исх. №</th><th>Статус</th><th>Результат</th></tr>
+        </thead>
+        <tbody>
+          {% for message in messages %}
+            <tr>
+              <td>{{ message.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+              <td><a href="{{ url_for('plot_detail', owner_plot_id=message.owner_plot_id) }}">{{ message.owner_name }} / {{ message.plot_number }}</a></td>
+              <td>+{{ message.phone }}</td>
+              <td>{{ message.claim_number }}</td>
+              <td>
+                <span class="status {% if message.status == 'sent' %}ok{% elif message.status == 'failed' %}error{% endif %}">
+                  {{ {'queued':'в очереди', 'processing':'отправляется', 'sent':'отправлено', 'failed':'ошибка'}.get(message.status, message.status) }}
+                </span>
+              </td>
+              <td>
+                {% if message.status == 'sent' %}{{ message.sent_at.strftime('%d.%m.%Y %H:%M') if message.sent_at else '' }}
+                {% elif message.status == 'failed' %}
+                  <div class="muted">{{ message.error_text }}</div>
+                  <form method="post" action="{{ url_for('whatsapp_retry', message_id=message.id) }}" style="margin-top: 6px;">
+                    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+                    <button class="button secondary" type="submit">Повторить</button>
+                  </form>
+                {% else %}Попыток: {{ message.attempts }}{% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="6" class="muted">Очередь пока пуста</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const stateElement = document.getElementById("wa-state");
+  const accountElement = document.getElementById("wa-account");
+  const qrElement = document.getElementById("wa-qr");
+  const helpElement = document.getElementById("wa-help");
+  const stateLabels = {
+    initializing: "Запуск", qr: "Требуется QR-код", authenticated: "Авторизация…",
+    ready: "Подключено", auth_failure: "Ошибка входа", disconnected: "Отключено",
+    logged_out: "Выход", error: "Ошибка", unavailable: "Сервис недоступен"
+  };
+
+  async function refreshWhatsAppStatus() {
+    try {
+      const response = await fetch("{{ url_for('whatsapp_status') }}", {cache: "no-store"});
+      const data = await response.json();
+      stateElement.textContent = stateLabels[data.state] || data.state;
+      stateElement.className = `status ${data.state === "ready" ? "ok" : (data.state === "error" || data.state === "unavailable" || data.state === "auth_failure" ? "error" : "")}`;
+      if (data.state === "ready") {
+        const label = data.account?.name ? `${data.account.name}, +${data.account.phone}` : `+${data.account?.phone || ""}`;
+        accountElement.textContent = `Подключён аккаунт: ${label}`;
+        qrElement.hidden = true;
+        qrElement.style.display = "none";
+        helpElement.hidden = true;
+      } else {
+        accountElement.textContent = data.error || "Ожидаем подключение телефона";
+        if (data.qr_data_url) {
+          qrElement.src = data.qr_data_url;
+          qrElement.hidden = false;
+          qrElement.style.display = "block";
+        } else {
+          qrElement.hidden = true;
+          qrElement.style.display = "none";
+        }
+        helpElement.hidden = false;
+      }
+    } catch (error) {
+      stateElement.textContent = "Сервис недоступен";
+      stateElement.className = "status error";
+      accountElement.textContent = error.message;
+    }
+  }
+  refreshWhatsAppStatus();
+  setInterval(refreshWhatsAppStatus, 3000);
+</script>
+{% endblock %}

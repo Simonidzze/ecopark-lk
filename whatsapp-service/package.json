@@ -1,0 +1,14 @@
+{
+  "name": "ecopark-whatsapp-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local WhatsApp Web bridge for Ecopark LK",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4",
+    "whatsapp-web.js": "1.34.7"
+  }
+}

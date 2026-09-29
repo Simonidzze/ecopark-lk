@@ -3,11 +3,42 @@ services:
     build: .
     image: ecopark-lk:latest
     restart: unless-stopped
+    depends_on:
+      - whatsapp
     env_file:
       - env.prod
     environment:
       TZ: Asia/Novosibirsk
+      WHATSAPP_SERVICE_URL: http://whatsapp:3000
     ports:
       - "8080:8080"
     volumes:
       - ./google-service-account.json:/run/secrets/google-service-account.json:ro
+
+  whatsapp-worker:
+    build: .
+    image: ecopark-lk:latest
+    restart: unless-stopped
+    command: ["python", "ecopark_sync.py", "--env-file", "/dev/null", "whatsapp-worker"]
+    depends_on:
+      - whatsapp
+    env_file:
+      - env.prod
+    environment:
+      TZ: Asia/Novosibirsk
+      WHATSAPP_SERVICE_URL: http://whatsapp:3000
+
+  whatsapp:
+    build: ./whatsapp-service
+    image: ecopark-whatsapp-service:latest
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Novosibirsk
+      WHATSAPP_SESSION_PATH: /data/whatsapp
+      WHATSAPP_SERVICE_TOKEN: ${WHATSAPP_SERVICE_TOKEN:-}
+    shm_size: 1gb
+    volumes:
+      - whatsapp-session:/data/whatsapp
+
+volumes:
+  whatsapp-session:

@@ -34,6 +34,12 @@ def command_web(_args):
     run_server()
 
 
+def command_whatsapp_worker(_args):
+    from ecopark_sync.whatsapp import run_whatsapp_worker
+
+    run_whatsapp_worker()
+
+
 def command_export_sheets(_args):
     from ecopark_sync.sheets import export_to_google_sheets
 
@@ -74,6 +80,11 @@ def build_parser():
 
     web_parser = subparsers.add_parser("web", help="Run Flask admin interface")
     web_parser.set_defaults(func=command_web)
+
+    whatsapp_parser = subparsers.add_parser(
+        "whatsapp-worker", help="Process the WhatsApp delivery queue"
+    )
+    whatsapp_parser.set_defaults(func=command_whatsapp_worker)
 
     export_parser = subparsers.add_parser("export-sheets", help="Export current MySQL data to Google Sheets")
     export_parser.set_defaults(func=command_export_sheets)

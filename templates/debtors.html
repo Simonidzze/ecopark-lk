@@ -17,6 +17,14 @@
 {% endblock %}
 
 {% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="messages">
+        {% for category, message in messages %}<div class="message {{ category }}">{{ message }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
   {% if db_error %}
     <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
   {% endif %}
@@ -37,6 +45,35 @@
   </section>
 
   <textarea id="phones-text" hidden>{{ phone_text }}</textarea>
+  <section class="section" style="margin-bottom: 16px;">
+    <div class="section-head">
+      <h2>Массовая отправка претензий в WhatsApp</h2>
+      <a class="button secondary" href="{{ url_for('whatsapp_admin') }}">Авторизация и очередь</a>
+    </div>
+    <div class="form-body">
+      <div class="message error" style="margin-bottom: 14px;">
+        Будет создано до {{ claim_count }} отдельных PDF — по одному на каждый участок из текущего фильтра.
+        Записи без корректного телефона, адреса или кадастрового номера будут пропущены.
+      </div>
+      <form class="form-grid" method="post" action="{{ url_for('debtors_whatsapp') }}">
+        <input type="hidden" name="months_from" value="{{ min_months }}">
+        <input type="hidden" name="months_to" value="{{ max_months }}">
+        <label class="field field-wide">
+          <span>Текст сообщения</span>
+          <textarea class="input" name="whatsapp_message" rows="4">{{ whatsapp_message }}</textarea>
+          <span>Можно использовать: {owner}, {plot_number}, {claim_number}.</span>
+        </label>
+        <label class="field field-wide" style="display: flex; grid-template-columns: auto 1fr; align-items: center;">
+          <input type="checkbox" name="confirm" value="yes" required>
+          <span>Подтверждаю постановку претензий по текущему фильтру в очередь</span>
+        </label>
+        <div class="field-wide">
+          <button class="button" type="submit">Поставить {{ claim_count }} документов в очередь</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
 
   <section class="section">
     <div class="section-head">

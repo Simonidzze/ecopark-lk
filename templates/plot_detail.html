@@ -7,6 +7,14 @@
 {% endblock %}
 
 {% block content %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="messages">
+        {% for category, message in messages %}<div class="message {{ category }}">{{ message }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+
   {% if db_error %}
     <div class="message error">MySQL недоступен или не настроен: {{ db_error }}</div>
   {% endif %}
@@ -92,8 +100,24 @@
             <span>Дата и реквизиты протокола</span>
             <textarea class="input" name="charge_basis" rows="2" placeholder="01.10.2025 или 01.10.2025 №…">{{ claim_defaults.charge_basis }}</textarea>
           </label>
-          <div class="field-wide">
+          <label class="field">
+            <span>Телефон для WhatsApp</span>
+            <input class="input" type="tel" name="whatsapp_phone" value="{{ claim_defaults.whatsapp_phone }}" placeholder="79990000000">
+          </label>
+          <div class="field muted" style="align-content: end;">
+            Для отправки сначала <a href="{{ url_for('whatsapp_admin') }}">подключите WhatsApp</a> по QR-коду.
+          </div>
+          <label class="field field-wide">
+            <span>Текст сообщения</span>
+            <textarea class="input" name="whatsapp_message" rows="4">{{ claim_defaults.whatsapp_message }}</textarea>
+            <span>Можно использовать: {owner}, {plot_number}, {claim_number}.</span>
+          </label>
+          <div class="field-wide toolbar">
             <button class="button" type="submit">Скачать заполненную претензию</button>
+            <button class="button secondary" type="submit"
+              formaction="{{ url_for('plot_whatsapp_claim', owner_plot_id=details.id) }}">
+              Поставить в очередь WhatsApp
+            </button>
           </div>
         </form>
       </div>

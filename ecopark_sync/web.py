@@ -1,8 +1,10 @@
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
+import json
 from pathlib import Path
 import re
+import uuid
 
 try:
     from flask import Flask, Response, abort, flash, redirect, render_template, request, send_file, url_for
@@ -31,9 +33,18 @@ from .expense_report import (
     load_monthly_expense_report,
     render_expenses_xlsx,
 )
-from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun
+from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun, WhatsAppMessage
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
+from .whatsapp import (
+    DEFAULT_MESSAGE_TEMPLATE,
+    WhatsAppClient,
+    WhatsAppServiceError,
+    first_whatsapp_phone,
+    format_whatsapp_message,
+    normalize_whatsapp_phone,
+    whatsapp_queue_stats,
+)
 
 
 COUNT_MODELS = (
@@ -49,6 +60,7 @@ COUNT_MODELS = (
     ("incomes", "Прочие доходы", Income),
     ("expenses", "Расходы", Expense),
     ("pretrial_claims", "Досудебные претензии", PretrialClaim),
+    ("whatsapp_messages", "Сообщения WhatsApp", WhatsAppMessage),
 )
 
 
@@ -535,6 +547,149 @@ def campaign_analysis(session, campaign, as_of=None):
     return rows, unmatched, stats
 
 
+def load_claim_details(session, owner_plot_id):
+    return session.execute(
+        select(
+            OwnerPlot.id,
+            OwnerPlot.plot_number,
+            OwnerPlot.account,
+            OwnerPlot.owner,
+            OwnerPlot.phone,
+            Plot.address,
+            Plot.cadastral_number,
+            Balance.debt,
+            Balance.penalty,
+            Balance.overpayment,
+            Balance.total,
+            Balance.synced_at.label("balance_synced_at"),
+        )
+        .outerjoin(Plot, Plot.id == OwnerPlot.plot_id)
+        .outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
+        .where(OwnerPlot.id == owner_plot_id)
+    ).mappings().first()
+
+
+def prepare_pretrial_claim(session, owner_plot_id, fields):
+    details = load_claim_details(session, owner_plot_id)
+    if details is None:
+        raise LookupError("Участок не найден")
+
+    principal_amount = decimal_value(details["debt"])
+    penalty_amount = decimal_value(details["penalty"])
+    if details["total"] is None:
+        total_amount = principal_amount + penalty_amount - decimal_value(details["overpayment"])
+    else:
+        total_amount = decimal_value(details["total"])
+    if total_amount <= 0:
+        raise ValueError("По участку нет суммы к взысканию")
+
+    calculation_date = date_value(details["balance_synced_at"]) or datetime.now().date()
+    claim_date = parse_iso_date(
+        fields.get("claim_date"),
+        "Дата претензии",
+        default=datetime.now().date(),
+    )
+    debt_period_from = parse_iso_date(
+        fields.get("debt_period_from"),
+        "Период задолженности с",
+        default=DEFAULT_DEBT_PERIOD_START,
+    )
+    debt_period_to = parse_iso_date(
+        fields.get("debt_period_to"),
+        "Период задолженности по",
+        default=calculation_date,
+    )
+    cadastral_number = (
+        str(fields.get("cadastral_number") or "").strip()
+        or details["cadastral_number"]
+        or extract_cadastral_number(details["address"])
+    )
+
+    issued_claim = PretrialClaim(
+        owner_plot_id=owner_plot_id,
+        plot_number=details["plot_number"],
+        owner_name=details["owner"],
+        claim_date=claim_date,
+        calculation_date=calculation_date,
+        debt_period_from=debt_period_from,
+        debt_period_to=debt_period_to,
+        principal_amount=principal_amount,
+        total_amount=total_amount,
+        created_at=now_utc_naive(),
+    )
+    session.add(issued_claim)
+    session.flush()
+
+    values = claim_values(
+        tsn_address=env("TSN_LEGAL_ADDRESS", ""),
+        tsn_phone=env("TSN_PHONE", ""),
+        tsn_email=env("TSN_EMAIL", ""),
+        plot_number=details["plot_number"],
+        owner_name=details["owner"],
+        plot_address=details["address"],
+        cadastral_number=cadastral_number,
+        claim_number=str(issued_claim.number),
+        claim_date=claim_date,
+        charge_basis=(
+            str(fields.get("charge_basis") or "").strip()
+            or env("TSN_CLAIM_BASIS", "")
+            or DEFAULT_CLAIM_BASIS
+        ),
+        account=details["account"],
+        calculation_date=calculation_date,
+        debt_period_from=debt_period_from,
+        debt_period_to=debt_period_to,
+        principal_amount=principal_amount,
+        penalty_amount=penalty_amount,
+        penalty_basis="",
+        total_amount=total_amount,
+    )
+    filename = safe_claim_filename(
+        details["plot_number"], claim_date, issued_claim.number, extension="pdf"
+    )
+    return {
+        "details": details,
+        "claim": issued_claim,
+        "values": values,
+        "filename": filename,
+        "claim_date": claim_date,
+        "cadastral_number": cadastral_number,
+    }
+
+
+def enqueue_whatsapp_claim(session, owner_plot_id, fields, phone, message_template, batch_id):
+    normalized_phone = normalize_whatsapp_phone(phone)
+    package = prepare_pretrial_claim(session, owner_plot_id, fields)
+    details = package["details"]
+    if not details["address"]:
+        raise ValueError("не указан адрес участка")
+    if not package["cadastral_number"]:
+        raise ValueError("не указан кадастровый номер")
+    message_text = format_whatsapp_message(
+        message_template,
+        owner=details["owner"],
+        plot_number=details["plot_number"],
+        claim_number=package["claim"].number,
+    )
+    queued = WhatsAppMessage(
+        batch_id=batch_id,
+        claim_number=package["claim"].number,
+        owner_plot_id=owner_plot_id,
+        owner_name=details["owner"],
+        plot_number=details["plot_number"],
+        phone=normalized_phone,
+        message_text=message_text,
+        claim_values_json=json.dumps(package["values"], ensure_ascii=False),
+        filename=package["filename"],
+        status="queued",
+        attempts=0,
+        created_at=now_utc_naive(),
+    )
+    session.add(queued)
+    session.flush()
+    return queued
+
+
 def create_app():
     require_dependency(Flask, "Flask")
     template_folder = Path(__file__).resolve().parent.parent / "templates"
@@ -787,6 +942,8 @@ def create_app():
             phone_text="\n".join(phones),
             min_months=min_months,
             max_months=max_months,
+            claim_count=sum(len(row["plots"]) for row in rows),
+            whatsapp_message=DEFAULT_MESSAGE_TEMPLATE,
             db_error=db_error,
         )
 
@@ -1001,6 +1158,10 @@ def create_app():
                         or DEFAULT_CLAIM_BASIS
                     ),
                 }
+                claim_defaults["whatsapp_phone"] = first_whatsapp_phone(
+                    split_phones(details["phone"])
+                )
+                claim_defaults["whatsapp_message"] = DEFAULT_MESSAGE_TEMPLATE
 
                 organization_fields = (
                     ("TSN_LEGAL_ADDRESS", "юридический или почтовый адрес ТСН"),
@@ -1146,6 +1307,162 @@ def create_app():
             ),
             max_age=0,
         )
+
+
+    @app.post("/admin/plots/<owner_plot_id>/whatsapp")
+    def plot_whatsapp_claim(owner_plot_id):
+        batch_id = f"single-{uuid.uuid4().hex}"
+        phone = request.form.get("whatsapp_phone", "")
+        message_template = request.form.get("whatsapp_message", DEFAULT_MESSAGE_TEMPLATE)
+        Session = make_session_factory()
+        try:
+            with Session() as session:
+                queued = enqueue_whatsapp_claim(
+                    session,
+                    owner_plot_id,
+                    request.form,
+                    phone,
+                    message_template,
+                    batch_id,
+                )
+                session.commit()
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            flash(f"Не удалось поставить претензию в очередь WhatsApp: {exc}", "error")
+            return redirect(url_for("plot_detail", owner_plot_id=owner_plot_id))
+        except Exception as exc:
+            app.logger.exception("Не удалось создать отправку WhatsApp")
+            flash(f"Не удалось поставить претензию в очередь WhatsApp: {exc}", "error")
+            return redirect(url_for("plot_detail", owner_plot_id=owner_plot_id))
+
+        flash(
+            f"Претензия исх. № {queued.claim_number} поставлена в очередь WhatsApp на +{queued.phone}",
+            "success",
+        )
+        return redirect(url_for("whatsapp_admin", batch_id=batch_id))
+
+    @app.post("/admin/debtors/whatsapp")
+    def debtors_whatsapp():
+        min_months, min_months_value = parse_min_months(request.form.get("months_from", "1"))
+        max_months, max_months_value = parse_max_months(request.form.get("months_to", ""))
+        redirect_arguments = {"months_from": min_months, "months_to": max_months}
+        if request.form.get("confirm") != "yes":
+            flash("Для массовой отправки подтвердите постановку документов в очередь", "error")
+            return redirect(url_for("debtors", **redirect_arguments))
+
+        try:
+            rows, _stats, _phones = load_debtors_report(min_months_value, max_months_value)
+            message_template = request.form.get("whatsapp_message", DEFAULT_MESSAGE_TEMPLATE)
+            format_whatsapp_message(
+                message_template,
+                owner="Собственник",
+                plot_number="0",
+                claim_number=0,
+            )
+            batch_id = f"bulk-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+            queued_count = 0
+            skipped = []
+            Session = make_session_factory()
+            with Session() as session:
+                for row in rows:
+                    phone = first_whatsapp_phone(row["phones"])
+                    for plot in row["plots"]:
+                        if not phone:
+                            skipped.append(f"участок {plot['plot_number']}: нет корректного телефона")
+                            continue
+                        try:
+                            with session.begin_nested():
+                                enqueue_whatsapp_claim(
+                                    session,
+                                    plot["owner_plot_id"],
+                                    {},
+                                    phone,
+                                    message_template,
+                                    batch_id,
+                                )
+                            queued_count += 1
+                        except (LookupError, ValueError) as exc:
+                            skipped.append(f"участок {plot['plot_number']}: {exc}")
+                session.commit()
+        except Exception as exc:
+            app.logger.exception("Не удалось создать массовую отправку WhatsApp")
+            flash(f"Не удалось создать массовую отправку WhatsApp: {exc}", "error")
+            return redirect(url_for("debtors", **redirect_arguments))
+
+        if queued_count:
+            text = f"В очередь WhatsApp добавлено документов: {queued_count}"
+            if skipped:
+                examples = "; ".join(skipped[:3])
+                suffix = f"; и ещё {len(skipped) - 3}" if len(skipped) > 3 else ""
+                text += f". Пропущено: {len(skipped)} ({examples}{suffix})"
+            flash(text, "success")
+            return redirect(url_for("whatsapp_admin", batch_id=batch_id))
+
+        details = "; ".join(skipped[:5])
+        if len(skipped) > 5:
+            details += f"; и ещё {len(skipped) - 5}"
+        flash(f"В очередь ничего не добавлено. {details}", "error")
+        return redirect(url_for("debtors", **redirect_arguments))
+
+    @app.get("/admin/whatsapp")
+    def whatsapp_admin():
+        db_error = None
+        messages = []
+        stats = {}
+        batch_id = request.args.get("batch_id", "").strip()
+        try:
+            Session = make_session_factory()
+            with Session() as session:
+                statement = select(WhatsAppMessage).order_by(
+                    WhatsAppMessage.created_at.desc(), WhatsAppMessage.id.desc()
+                )
+                if batch_id:
+                    statement = statement.where(WhatsAppMessage.batch_id == batch_id)
+                messages = session.scalars(statement.limit(100)).all()
+                stats = whatsapp_queue_stats(session)
+        except Exception as exc:
+            db_error = str(exc)
+        return render_template(
+            "whatsapp.html",
+            messages=messages,
+            stats=stats,
+            batch_id=batch_id,
+            db_error=db_error,
+        )
+
+    @app.get("/admin/whatsapp/status")
+    def whatsapp_status():
+        try:
+            return WhatsAppClient().status()
+        except WhatsAppServiceError as exc:
+            return {"state": "unavailable", "error": str(exc), "qr_data_url": None, "account": None}
+
+    @app.post("/admin/whatsapp/logout")
+    def whatsapp_logout():
+        try:
+            WhatsAppClient().logout()
+            flash("Сессия WhatsApp завершена. Появится новый QR-код.", "success")
+        except WhatsAppServiceError as exc:
+            flash(f"Не удалось завершить сессию WhatsApp: {exc}", "error")
+        return redirect(url_for("whatsapp_admin"))
+
+    @app.post("/admin/whatsapp/messages/<int:message_id>/retry")
+    def whatsapp_retry(message_id):
+        Session = make_session_factory()
+        with Session() as session:
+            message = session.get(WhatsAppMessage, message_id)
+            if message is None:
+                abort(404)
+            if message.status != "failed":
+                flash("Повторить можно только неуспешную отправку", "error")
+            else:
+                message.status = "queued"
+                message.error_text = None
+                message.started_at = None
+                session.commit()
+                flash(f"Отправка #{message.id} возвращена в очередь", "success")
+        return redirect(url_for("whatsapp_admin", batch_id=request.form.get("batch_id", "")))
 
     @app.post("/admin/sync")
     def sync_now():
