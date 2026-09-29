@@ -1,4 +1,5 @@
 const http = require("http");
+const net = require("net");
 const QRCode = require("qrcode");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 
@@ -6,6 +7,12 @@ const port = Number(process.env.PORT || 3000);
 const token = process.env.WHATSAPP_SERVICE_TOKEN || "";
 const dataPath = process.env.WHATSAPP_SESSION_PATH || "/data/whatsapp";
 const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
+const gatewayIp = String(process.env.WHATSAPP_GATEWAY_IP || "").trim();
+const gatewayPort = Number(process.env.WHATSAPP_GATEWAY_PORT || "443");
+const gatewayHosts = String(process.env.WHATSAPP_GATEWAY_HOSTS || "web.whatsapp.com")
+  .split(",")
+  .map((host) => host.trim().toLowerCase())
+  .filter((host) => /^[a-z0-9.-]+$/.test(host));
 const maxBodyBytes = 30 * 1024 * 1024;
 
 let client = null;
@@ -54,6 +61,35 @@ function readJson(req) {
 }
 
 async function startClient() {
+  if (gatewayIp && net.isIP(gatewayIp) === 0) {
+    state = "error";
+    lastError = "WHATSAPP_GATEWAY_IP должен содержать корректный IPv4 или IPv6 адрес";
+    console.error(lastError);
+    return;
+  }
+  if (gatewayIp && gatewayHosts.length === 0) {
+    state = "error";
+    lastError = "WHATSAPP_GATEWAY_HOSTS не содержит корректных имён хостов";
+    console.error(lastError);
+    return;
+  }
+  if (gatewayIp && (!Number.isInteger(gatewayPort) || gatewayPort < 1 || gatewayPort > 65535)) {
+    state = "error";
+    lastError = "WHATSAPP_GATEWAY_PORT должен быть целым числом от 1 до 65535";
+    console.error(lastError);
+    return;
+  }
+  const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"];
+  if (gatewayIp) {
+    const gatewayAddress = net.isIP(gatewayIp) === 6
+      ? `[${gatewayIp}]:${gatewayPort}`
+      : `${gatewayIp}:${gatewayPort}`;
+    const rules = gatewayHosts.map((host) => `MAP ${host}:443 ${gatewayAddress}`).join(",");
+    browserArgs.push(`--host-resolver-rules=${rules}`);
+  }
+  console.log(
+    `Starting WhatsApp Web; gateway=${gatewayIp ? `${gatewayIp}:${gatewayPort} for ${gatewayHosts.join(",")}` : "direct"}`,
+  );
   state = "initializing";
   qrDataUrl = null;
   account = null;
@@ -63,7 +99,7 @@ async function startClient() {
     puppeteer: {
       executablePath: chromiumPath,
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      args: browserArgs,
     },
   });
   client = nextClient;
@@ -74,11 +110,13 @@ async function startClient() {
     account = null;
     lastError = null;
     qrDataUrl = await QRCode.toDataURL(qr, { width: 360, margin: 1 });
+    console.log("WhatsApp QR code received");
   });
   nextClient.on("authenticated", () => {
     if (client !== nextClient) return;
     state = "authenticated";
     qrDataUrl = null;
+    console.log("WhatsApp authenticated");
   });
   nextClient.on("ready", () => {
     if (client !== nextClient) return;
@@ -90,17 +128,20 @@ async function startClient() {
       name: info.pushname || null,
       platform: info.platform || null,
     };
+    console.log(`WhatsApp ready; account=${account.phone || "unknown"}`);
   });
   nextClient.on("auth_failure", (message) => {
     if (client !== nextClient) return;
     state = "auth_failure";
     lastError = String(message || "Authentication failed");
+    console.error(`WhatsApp authentication failed: ${lastError}`);
   });
   nextClient.on("disconnected", (reason) => {
     if (client !== nextClient) return;
     state = "disconnected";
     account = null;
     lastError = String(reason || "Disconnected");
+    console.error(`WhatsApp disconnected: ${lastError}`);
   });
 
   try {
@@ -109,6 +150,7 @@ async function startClient() {
     if (client === nextClient) {
       state = "error";
       lastError = error.message;
+      console.error("WhatsApp initialization failed", error);
     }
   }
 }
@@ -142,7 +184,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "GET" && req.url === "/status") {
-    response(res, 200, { state, qr_data_url: qrDataUrl, account, error: lastError });
+    response(res, 200, {
+      state,
+      qr_data_url: qrDataUrl,
+      account,
+      error: lastError,
+      gateway: { enabled: Boolean(gatewayIp), ip: gatewayIp || null, port: gatewayPort, hosts: gatewayHosts },
+    });
     return;
   }
 

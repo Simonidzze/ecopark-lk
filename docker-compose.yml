@@ -37,6 +37,9 @@ services:
       TZ: Asia/Novosibirsk
       WHATSAPP_SESSION_PATH: /data/whatsapp
       WHATSAPP_SERVICE_TOKEN: ${WHATSAPP_SERVICE_TOKEN:-}
+      WHATSAPP_GATEWAY_IP: ${WHATSAPP_GATEWAY_IP:-}
+      WHATSAPP_GATEWAY_PORT: ${WHATSAPP_GATEWAY_PORT:-443}
+      WHATSAPP_GATEWAY_HOSTS: ${WHATSAPP_GATEWAY_HOSTS:-web.whatsapp.com}
     shm_size: 1gb
     volumes:
       - whatsapp-session:/data/whatsapp

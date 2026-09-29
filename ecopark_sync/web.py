@@ -1418,6 +1418,16 @@ def create_app():
         messages = []
         stats = {}
         batch_id = request.args.get("batch_id", "").strip()
+        connection_status = {
+            "state": "unavailable",
+            "error": "Сервис WhatsApp не отвечает",
+            "qr_data_url": None,
+            "account": None,
+        }
+        try:
+            connection_status = WhatsAppClient(timeout=5).status()
+        except WhatsAppServiceError as exc:
+            connection_status["error"] = str(exc)
         try:
             Session = make_session_factory()
             with Session() as session:
@@ -1436,6 +1446,7 @@ def create_app():
             stats=stats,
             batch_id=batch_id,
             db_error=db_error,
+            connection_status=connection_status,
         )
 
     @app.get("/admin/whatsapp/status")

@@ -26,16 +26,30 @@
     <section class="section">
       <div class="section-head">
         <h2>Подключение WhatsApp</h2>
-        <span id="wa-state" class="status">Проверка…</span>
+        <span id="wa-state" class="status">
+          {{ {'initializing':'Запуск', 'qr':'Требуется QR-код', 'authenticated':'Авторизация…', 'ready':'Подключено', 'auth_failure':'Ошибка входа', 'disconnected':'Отключено', 'logged_out':'Выход', 'error':'Ошибка', 'unavailable':'Сервис недоступен'}.get(connection_status.state, connection_status.state) }}
+        </span>
       </div>
       <div class="form-body" style="text-align: center;">
-        <div id="wa-account" class="muted">Ожидаем состояние сервиса</div>
-        <img id="wa-qr" alt="QR-код WhatsApp" hidden style="width: min(360px, 100%); margin: 14px auto; display: none;">
+        <div id="wa-account" class="muted">
+          {% if connection_status.state == 'ready' %}
+            Подключён аккаунт: {{ connection_status.account.name or '' }}, +{{ connection_status.account.phone or '' }}
+          {% else %}
+            {{ connection_status.error or 'Ожидаем QR-код от WhatsApp Web' }}
+          {% endif %}
+        </div>
+        <div id="wa-qr-placeholder" class="message {% if connection_status.state in ['error', 'unavailable', 'auth_failure'] %}error{% endif %}"
+             {% if connection_status.qr_data_url %}hidden{% endif %} style="margin: 14px 0; text-align: left;">
+          QR-код ещё не получен. Текущее состояние: {{ connection_status.state }}.
+        </div>
+        <img id="wa-qr" alt="QR-код WhatsApp" src="{{ connection_status.qr_data_url or '' }}"
+             {% if not connection_status.qr_data_url %}hidden{% endif %}
+             style="width: min(360px, 100%); margin: 14px auto; display: {{ 'block' if connection_status.qr_data_url else 'none' }};">
         <p id="wa-help" class="muted">
           Откройте WhatsApp на телефоне → Связанные устройства → Привязка устройства и отсканируйте QR-код.
         </p>
-        <form method="post" action="{{ url_for('whatsapp_logout') }}" onsubmit="return confirm('Завершить текущую сессию WhatsApp?');">
-          <button class="button danger" type="submit">Выйти и привязать другой номер</button>
+        <form method="post" action="{{ url_for('whatsapp_logout') }}" onsubmit="return confirm('Перезапустить подключение WhatsApp и получить новый QR-код?');">
+          <button class="button secondary" type="submit">Получить новый QR-код / сменить номер</button>
         </form>
       </div>
     </section>
@@ -103,6 +117,7 @@
   const stateElement = document.getElementById("wa-state");
   const accountElement = document.getElementById("wa-account");
   const qrElement = document.getElementById("wa-qr");
+  const qrPlaceholder = document.getElementById("wa-qr-placeholder");
   const helpElement = document.getElementById("wa-help");
   const stateLabels = {
     initializing: "Запуск", qr: "Требуется QR-код", authenticated: "Авторизация…",
@@ -121,6 +136,7 @@
         accountElement.textContent = `Подключён аккаунт: ${label}`;
         qrElement.hidden = true;
         qrElement.style.display = "none";
+        qrPlaceholder.hidden = true;
         helpElement.hidden = true;
       } else {
         accountElement.textContent = data.error || "Ожидаем подключение телефона";
@@ -128,9 +144,16 @@
           qrElement.src = data.qr_data_url;
           qrElement.hidden = false;
           qrElement.style.display = "block";
+          qrPlaceholder.hidden = true;
         } else {
           qrElement.hidden = true;
           qrElement.style.display = "none";
+          qrPlaceholder.hidden = false;
+          qrPlaceholder.className = `message ${["error", "unavailable", "auth_failure"].includes(data.state) ? "error" : ""}`;
+          const gatewayText = data.gateway?.enabled ? " через настроенный шлюз" : " напрямую";
+          qrPlaceholder.textContent = data.error
+            ? `QR-код не получен: ${data.error}`
+            : `Ожидаем QR-код от WhatsApp Web${gatewayText}. Состояние: ${data.state}.`;
         }
         helpElement.hidden = false;
       }
@@ -138,6 +161,9 @@
       stateElement.textContent = "Сервис недоступен";
       stateElement.className = "status error";
       accountElement.textContent = error.message;
+      qrPlaceholder.hidden = false;
+      qrPlaceholder.className = "message error";
+      qrPlaceholder.textContent = `QR-код не получен: ${error.message}`;
     }
   }
   refreshWhatsAppStatus();

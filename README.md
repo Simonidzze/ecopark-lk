@@ -297,11 +297,58 @@ WHATSAPP_SERVICE_URL=http://whatsapp:3000
 WHATSAPP_AUTO_INIT_SCHEMA=true
 WHATSAPP_SERVICE_TOKEN=
 WHATSAPP_REQUEST_TIMEOUT_SECONDS=60
+WHATSAPP_GATEWAY_IP=
+WHATSAPP_GATEWAY_PORT=443
+WHATSAPP_GATEWAY_HOSTS=web.whatsapp.com
 WHATSAPP_QUEUE_POLL_SECONDS=5
 WHATSAPP_SEND_INTERVAL_SECONDS=30
 WHATSAPP_SEND_JITTER_SECONDS=10
 WHATSAPP_MAX_ATTEMPTS=1
 ```
+
+Если `web.whatsapp.com` недоступен напрямую, можно направить его на прозрачный TCP-шлюз.
+Создайте рядом с `docker-compose.yml` файл `.env` (это именно Compose `.env`, не
+`env.prod`):
+
+```env
+WHATSAPP_GATEWAY_IP=203.0.113.10
+WHATSAPP_GATEWAY_PORT=8443
+WHATSAPP_GATEWAY_HOSTS=web.whatsapp.com
+```
+
+Chromium перенаправит соединение `web.whatsapp.com:443` на указанные IP и порт
+(`203.0.113.10:8443` в примере), но сохранит имя
+`web.whatsapp.com` в TLS SNI и при проверке сертификата. Пример шлюза Nginx:
+
+```nginx
+stream {
+    resolver 1.1.1.1 ipv6=off valid=300s;
+
+    map $ssl_preread_server_name $whatsapp_upstream {
+        web.whatsapp.com    web.whatsapp.com:443;
+        static.whatsapp.net static.whatsapp.net:443;
+        default             web.whatsapp.com:443;
+    }
+
+    server {
+        listen 8443;
+        ssl_preread on;
+        proxy_connect_timeout 15s;
+        proxy_timeout 1h;
+        proxy_pass $whatsapp_upstream;
+    }
+}
+```
+
+Ограничьте доступ к настроенному порту шлюза (`8443` в примере) по IP сервера
+Ecopark. Если вслед за
+`web.whatsapp.com` окажется недоступен `static.whatsapp.net`, добавьте его через
+запятую в `WHATSAPP_GATEWAY_HOSTS`. После изменения `.env` пересоздайте bridge:
+
+```bash
+docker compose up -d --build --force-recreate whatsapp
+```
+
 
 Bridge доступен только внутри сети Docker и не публикует порт на хост. Volume с
 сессией WhatsApp является чувствительным: не копируйте его и не передавайте третьим
