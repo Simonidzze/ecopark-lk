@@ -21,6 +21,10 @@ from ecopark_sync.claims import (
     format_ru_money,
     render_pretrial_claim,
 )
+from ecopark_sync.claim_images import (
+    CLAIM_SIGNATURE_MEDIA_PATH,
+    CLAIM_STAMP_MEDIA_PATH,
+)
 from ecopark_sync.models import Balance, Base, OwnerPlot, Plot, PretrialClaim
 from ecopark_sync.web import create_app
 
@@ -64,10 +68,18 @@ class ClaimDocumentTest(unittest.TestCase):
         generated = render_pretrial_claim(values)
 
         with ZipFile(claim_template_path(), "r") as template, ZipFile(generated, "r") as result:
-            self.assertEqual(template.namelist(), result.namelist())
+            self.assertEqual(
+                set(template.namelist())
+                | {CLAIM_SIGNATURE_MEDIA_PATH, CLAIM_STAMP_MEDIA_PATH},
+                set(result.namelist()),
+            )
             self.assertEqual(template.read("word/footer1.xml"), result.read("word/footer1.xml"))
             document_xml = result.read("word/document.xml").decode("utf-8")
             settings_xml = result.read("word/settings.xml").decode("utf-8")
+            relationships_xml = result.read("word/_rels/document.xml.rels").decode("utf-8")
+            content_types_xml = result.read("[Content_Types].xml").decode("utf-8")
+            signature_png = result.read(CLAIM_SIGNATURE_MEDIA_PATH)
+            stamp_png = result.read(CLAIM_STAMP_MEDIA_PATH)
 
         for token in CLAIM_TOKENS:
             self.assertNotIn("{{" + token + "}}", document_xml)
@@ -85,6 +97,14 @@ class ClaimDocumentTest(unittest.TestCase):
         self.assertNotIn("п.7.5 Уставом ТСН", document_xml)
         self.assertNotIn("в связи с чем, подлежит уплате", document_xml)
         self.assertNotIn('<w:br w:type="page"/>', document_xml)
+        self.assertNotIn("___________________ / Дорогин", document_xml)
+        self.assertIn("Подпись председателя правления ТСН", document_xml)
+        self.assertIn("Печать ТСН Микрорайон Экопарк", document_xml)
+        self.assertIn("rIdClaimSignature", relationships_xml)
+        self.assertIn("rIdClaimStamp", relationships_xml)
+        self.assertIn('Extension="png" ContentType="image/png"', content_types_xml)
+        self.assertTrue(signature_png.startswith(b"\x89PNG\r\n\x1a\n"))
+        self.assertTrue(stamp_png.startswith(b"\x89PNG\r\n\x1a\n"))
         self.assertIn('<w:updateFields w:val="true"/>', settings_xml)
 
     def test_converts_docx_to_pdf_with_libreoffice(self):

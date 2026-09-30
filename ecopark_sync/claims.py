@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from .claim_images import load_claim_image_parts, patch_claim_image_part
+
 
 PDF_CONTENT_TYPE = "application/pdf"
 DEFAULT_DEBT_PERIOD_START = date(2025, 10, 1)
@@ -176,9 +178,16 @@ def render_pretrial_claim(values, template_path=None):
     missing_keys = sorted(set(CLAIM_TOKENS) - set(values))
     if missing_keys:
         raise ValueError(f"Не переданы значения для шаблона: {', '.join(missing_keys)}")
+    image_parts = load_claim_image_parts()
 
     output = BytesIO()
     with ZipFile(template_path, "r") as source, ZipFile(output, "w", ZIP_DEFLATED) as target:
+        duplicate_parts = sorted(set(source.namelist()) & set(image_parts))
+        if duplicate_parts:
+            raise ValueError(
+                "В DOCX-шаблоне уже существуют служебные изображения: "
+                + ", ".join(duplicate_parts)
+            )
         for info in source.infolist():
             payload = source.read(info.filename)
             if info.filename == "word/document.xml":
@@ -194,7 +203,10 @@ def render_pretrial_claim(values, template_path=None):
                 if unresolved:
                     raise ValueError(f"В DOCX остались незаполненные поля: {', '.join(unresolved)}")
                 payload = document_xml.encode("utf-8")
+            payload = patch_claim_image_part(info.filename, payload)
             target.writestr(info, payload)
+        for filename, payload in image_parts.items():
+            target.writestr(filename, payload)
 
     output.seek(0)
     return output

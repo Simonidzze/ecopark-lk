@@ -254,6 +254,9 @@ TSN_CLAIM_BASIS=01.10.2025
 незаполненные реквизиты в документе явно помечаются как `не указан`, поэтому перед
 направлением претензии документ нужно проверить. Исходный шаблон приложения находится в
 `templates/documents/pretrial_claim.docx`, а PDF при скачивании формируется LibreOffice.
+Подпись и печать добавляются в PDF автоматически из файлов
+`templates/documents/assets/claim_signature.png` и
+`templates/documents/assets/claim_stamp.png`; для их замены достаточно обновить эти PNG-файлы.
 В Docker-образ LibreOffice уже включен. При локальном запуске вне Docker команда
 `soffice` или `libreoffice` должна быть доступна в `PATH`; нестандартный путь можно задать
 переменной `LIBREOFFICE_BINARY`.
