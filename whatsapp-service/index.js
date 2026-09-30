@@ -24,6 +24,9 @@ let state = "initializing";
 let qrDataUrl = null;
 let account = null;
 let lastError = null;
+let readyRecoveryTimer = null;
+let readyRecoveryRunning = false;
+let readyRecoveryAttempts = 0;
 
 function response(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -83,6 +86,88 @@ function removeStaleChromiumProfileLocks() {
   }
 }
 
+function clearReadyRecoveryTimer() {
+  if (readyRecoveryTimer) {
+    clearTimeout(readyRecoveryTimer);
+    readyRecoveryTimer = null;
+  }
+  readyRecoveryAttempts = 0;
+}
+
+async function inspectWhatsAppPage(nextClient) {
+  return await nextClient.pupPage.evaluate(() => {
+    let socketState = null;
+    let probeError = null;
+    try {
+      socketState = window.require("WAWebSocketModel").Socket.state || null;
+    } catch (error) {
+      probeError = String(error?.message || error);
+    }
+    const hasWWebJS = typeof window.WWebJS !== "undefined";
+    const canSendMessage = typeof window.WWebJS?.sendMessage === "function";
+    return {
+      socketState,
+      hasWWebJS,
+      canSendMessage,
+      ready: socketState === "CONNECTED" && canSendMessage,
+      error: probeError,
+    };
+  });
+}
+
+function markClientReady(nextClient, source) {
+  if (client !== nextClient) return false;
+  const info = nextClient.info || {};
+  state = "ready";
+  qrDataUrl = null;
+  lastError = null;
+  account = {
+    phone: info.wid ? info.wid.user : null,
+    name: info.pushname || null,
+    platform: info.platform || null,
+  };
+  clearReadyRecoveryTimer();
+  console.log(`WhatsApp ready; source=${source}; account=${account.phone || "unknown"}`);
+  return true;
+}
+
+function scheduleReadyRecovery(nextClient, delayMs = 5000) {
+  if (readyRecoveryTimer || readyRecoveryRunning || client !== nextClient || state === "ready") return;
+  readyRecoveryTimer = setTimeout(async () => {
+    readyRecoveryTimer = null;
+    if (client !== nextClient || state === "ready") return;
+    readyRecoveryRunning = true;
+    readyRecoveryAttempts += 1;
+    try {
+      const probe = await inspectWhatsAppPage(nextClient);
+      console.log(`WhatsApp readiness probe #${readyRecoveryAttempts}: ${JSON.stringify(probe)}`);
+      if (probe.ready) {
+        markClientReady(nextClient, "readiness-probe");
+        return;
+      }
+      await nextClient.pupPage.evaluate(() => {
+        if (typeof window.onAppStateHasSyncedEvent === "function") {
+          void window.onAppStateHasSyncedEvent();
+        }
+      });
+      if (readyRecoveryAttempts >= 6) {
+        lastError = "WhatsApp авторизован, но веб-клиент ещё не готов к отправке";
+      }
+    } catch (error) {
+      console.error(`WhatsApp readiness recovery failed: ${error.message || error}`);
+      if (readyRecoveryAttempts >= 6) {
+        lastError = `WhatsApp авторизован, но проверка готовности завершилась ошибкой: ${error.message || error}`;
+      }
+    } finally {
+      readyRecoveryRunning = false;
+      if (client === nextClient && state !== "ready") {
+        const nextDelay = readyRecoveryAttempts < 6 ? 8000 : 30000;
+        scheduleReadyRecovery(nextClient, nextDelay);
+      }
+    }
+  }, delayMs);
+}
+
 async function startClient() {
   if (gatewayIp && net.isIP(gatewayIp) === 0) {
     state = "error";
@@ -134,6 +219,8 @@ async function startClient() {
     }
   }
   console.log(`Starting WhatsApp Web; gateway=${gatewayDescription}`);
+  clearReadyRecoveryTimer();
+  readyRecoveryRunning = false;
   state = "initializing";
   qrDataUrl = null;
   account = null;
@@ -150,6 +237,7 @@ async function startClient() {
 
   nextClient.on("qr", async (qr) => {
     if (client !== nextClient) return;
+    clearReadyRecoveryTimer();
     state = "qr";
     account = null;
     lastError = null;
@@ -158,30 +246,28 @@ async function startClient() {
   });
   nextClient.on("authenticated", () => {
     if (client !== nextClient) return;
-    state = "authenticated";
-    qrDataUrl = null;
+    if (state !== "ready") {
+      state = "authenticated";
+      qrDataUrl = null;
+      lastError = null;
+    }
+    scheduleReadyRecovery(nextClient);
     console.log("WhatsApp authenticated");
   });
   nextClient.on("ready", () => {
     if (client !== nextClient) return;
-    state = "ready";
-    qrDataUrl = null;
-    const info = nextClient.info || {};
-    account = {
-      phone: info.wid ? info.wid.user : null,
-      name: info.pushname || null,
-      platform: info.platform || null,
-    };
-    console.log(`WhatsApp ready; account=${account.phone || "unknown"}`);
+    markClientReady(nextClient, "library-event");
   });
   nextClient.on("auth_failure", (message) => {
     if (client !== nextClient) return;
+    clearReadyRecoveryTimer();
     state = "auth_failure";
     lastError = String(message || "Authentication failed");
     console.error(`WhatsApp authentication failed: ${lastError}`);
   });
   nextClient.on("disconnected", (reason) => {
     if (client !== nextClient) return;
+    clearReadyRecoveryTimer();
     state = "disconnected";
     account = null;
     lastError = String(reason || "Disconnected");
@@ -192,8 +278,9 @@ async function startClient() {
     await nextClient.initialize();
   } catch (error) {
     if (client === nextClient) {
+      clearReadyRecoveryTimer();
       state = "error";
-      lastError = error.message;
+      lastError = String(error?.message || error);
       console.error("WhatsApp initialization failed", error);
     }
   }
@@ -202,6 +289,7 @@ async function startClient() {
 async function logout() {
   const oldClient = client;
   client = null;
+  clearReadyRecoveryTimer();
   state = "logged_out";
   qrDataUrl = null;
   account = null;
@@ -300,6 +388,7 @@ server.listen(port, "0.0.0.0", () => {
 
 process.on("SIGTERM", async () => {
   try {
+    clearReadyRecoveryTimer();
     if (client) await client.destroy();
   } finally {
     process.exit(0);
