@@ -44,6 +44,19 @@ function authorized(req) {
   return req.headers.authorization === `Bearer ${token}`;
 }
 
+function serializeWhatsAppId(value, fallbackPhone = null) {
+  if (typeof value === "string" && value) return value;
+  if (value && typeof value === "object") {
+    if (typeof value._serialized === "string" && value._serialized) return value._serialized;
+    if (typeof value.$1 === "string" && value.$1) return value.$1;
+    if (typeof value.user === "string" && value.user) {
+      const server = typeof value.server === "string" && value.server ? value.server : "c.us";
+      return `${value.user}@${server}`;
+    }
+  }
+  return fallbackPhone ? `${fallbackPhone}@c.us` : null;
+}
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let size = 0;
@@ -363,6 +376,7 @@ const server = http.createServer(async (req, res) => {
       response(res, 409, { error: "WhatsApp is not ready" });
       return;
     }
+    let sendStage = "запрос";
     try {
       const body = await readJson(req);
       const phone = String(body.phone || "").replace(/\D/g, "");
@@ -373,23 +387,39 @@ const server = http.createServer(async (req, res) => {
         response(res, 400, { error: "phone and pdf_base64 are required" });
         return;
       }
+
+      sendStage = "поиск номера";
       const contact = await client.getNumberId(phone);
       if (!contact) {
         response(res, 404, { error: "Номер не зарегистрирован в WhatsApp" });
         return;
       }
+
+      sendStage = "идентификатор получателя";
+      const contactId = serializeWhatsAppId(contact, phone);
+      sendStage = "отправка документа";
       const media = new MessageMedia("application/pdf", pdfBase64, filename);
-      const message = await client.sendMessage(contact._serialized, media, {
+      const message = await client.sendMessage(contactId, media, {
         caption,
         sendMediaAsDocument: true,
         waitUntilMsgSent: true,
       });
+      if (!message) {
+        throw new Error("WhatsApp не вернул подтверждение отправки");
+      }
+      const messageId = serializeWhatsAppId(message.id);
+      if (!messageId) {
+        throw new Error("WhatsApp вернул сообщение без идентификатора");
+      }
+
       response(res, 200, {
         ok: true,
-        message_id: message.id ? message.id._serialized : null,
+        message_id: messageId,
       });
     } catch (error) {
-      response(res, 500, { error: error.message });
+      const detail = String(error?.message || error);
+      console.error("WhatsApp send failed at " + sendStage + ": " + detail);
+      response(res, 500, { error: sendStage + ": " + detail });
     }
     return;
   }
