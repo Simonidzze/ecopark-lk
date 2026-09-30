@@ -388,6 +388,17 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
+      sendStage = "проверка патча отправки PDF";
+      const mediaPatchActive = await client.pupPage.evaluate(() => {
+        if (typeof window.WWebJS?.sendMessage !== "function") return false;
+        return window.WWebJS.sendMessage
+          .toString()
+          .includes("delete message.__x_id");
+      });
+      if (!mediaPatchActive) {
+        throw new Error("в запущенном контейнере отсутствует патч whatsapp-web.js");
+      }
+
       sendStage = "поиск номера";
       const contact = await client.getNumberId(phone);
       if (!contact) {

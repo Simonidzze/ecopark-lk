@@ -61,6 +61,18 @@ replaceOnce(
     window.WWebJS.getChats = async () => {`,
 );
 
+replaceOnce(
+  "media message id collision",
+  `        };
+
+        // Bot's won't reply if canonicalUrl is set (linking)`,
+  `        };
+
+        delete message.__x_id;
+
+        // Bot's won't reply if canonicalUrl is set (linking)`,
+);
+
 const lastReceivedKey = "chat.lastReceivedKey._serialized";
 const lastReceivedKeyFallback =
   "window.WWebJS.getMsgKeyId(chat.lastReceivedKey)";
