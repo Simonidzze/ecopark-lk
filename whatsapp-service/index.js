@@ -11,6 +11,7 @@ const dataPath = process.env.WHATSAPP_SESSION_PATH || "/data/whatsapp";
 const chromiumPath = process.env.PUPPETEER_EXECUTABLE_PATH || "/usr/bin/chromium";
 const sessionId = "ecopark";
 const gatewayIp = String(process.env.WHATSAPP_GATEWAY_IP || "").trim();
+const gatewayMode = String(process.env.WHATSAPP_GATEWAY_MODE || "resolver").trim().toLowerCase();
 const gatewayPort = Number(process.env.WHATSAPP_GATEWAY_PORT || "443");
 const gatewayHosts = String(process.env.WHATSAPP_GATEWAY_HOSTS || "web.whatsapp.com")
   .split(",")
@@ -89,7 +90,13 @@ async function startClient() {
     console.error(lastError);
     return;
   }
-  if (gatewayIp && gatewayHosts.length === 0) {
+  if (gatewayIp && !["resolver", "socks5"].includes(gatewayMode)) {
+    state = "error";
+    lastError = "WHATSAPP_GATEWAY_MODE должен быть resolver или socks5";
+    console.error(lastError);
+    return;
+  }
+  if (gatewayIp && gatewayMode === "resolver" && gatewayHosts.length === 0) {
     state = "error";
     lastError = "WHATSAPP_GATEWAY_HOSTS не содержит корректных имён хостов";
     console.error(lastError);
@@ -111,16 +118,22 @@ async function startClient() {
   }
 
   const browserArgs = ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"];
+  let gatewayDescription = "direct";
   if (gatewayIp) {
     const gatewayAddress = net.isIP(gatewayIp) === 6
       ? `[${gatewayIp}]:${gatewayPort}`
       : `${gatewayIp}:${gatewayPort}`;
-    const rules = gatewayHosts.map((host) => `MAP ${host}:443 ${gatewayAddress}`).join(",");
-    browserArgs.push(`--host-resolver-rules=${rules}`);
+    browserArgs.push("--disable-quic");
+    if (gatewayMode === "socks5") {
+      browserArgs.push(`--proxy-server=socks5://${gatewayAddress}`);
+      gatewayDescription = `socks5://${gatewayAddress}`;
+    } else {
+      const rules = gatewayHosts.map((host) => `MAP ${host}:443 ${gatewayAddress}`).join(",");
+      browserArgs.push(`--host-resolver-rules=${rules}`);
+      gatewayDescription = `${gatewayAddress} for ${gatewayHosts.join(",")}`;
+    }
   }
-  console.log(
-    `Starting WhatsApp Web; gateway=${gatewayIp ? `${gatewayIp}:${gatewayPort} for ${gatewayHosts.join(",")}` : "direct"}`,
-  );
+  console.log(`Starting WhatsApp Web; gateway=${gatewayDescription}`);
   state = "initializing";
   qrDataUrl = null;
   account = null;
@@ -220,7 +233,13 @@ const server = http.createServer(async (req, res) => {
       qr_data_url: qrDataUrl,
       account,
       error: lastError,
-      gateway: { enabled: Boolean(gatewayIp), ip: gatewayIp || null, port: gatewayPort, hosts: gatewayHosts },
+      gateway: {
+        enabled: Boolean(gatewayIp),
+        mode: gatewayMode,
+        ip: gatewayIp || null,
+        port: gatewayPort,
+        hosts: gatewayMode === "resolver" ? gatewayHosts : [],
+      },
     });
     return;
   }

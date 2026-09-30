@@ -303,6 +303,7 @@ WHATSAPP_AUTO_INIT_SCHEMA=true
 WHATSAPP_SERVICE_TOKEN=
 WHATSAPP_REQUEST_TIMEOUT_SECONDS=60
 WHATSAPP_GATEWAY_IP=
+WHATSAPP_GATEWAY_MODE=resolver
 WHATSAPP_GATEWAY_PORT=443
 WHATSAPP_GATEWAY_HOSTS=web.whatsapp.com
 WHATSAPP_QUEUE_POLL_SECONDS=5
@@ -311,12 +312,44 @@ WHATSAPP_SEND_JITTER_SECONDS=10
 WHATSAPP_MAX_ATTEMPTS=1
 ```
 
+Если блокировка выполняется по TLS SNI или фиксированный туннель `ssh -L` приводит
+к `auth timeout`, используйте динамический SOCKS5-туннель. Он проксирует весь трафик
+Chromium, включая дополнительные домены, DNS и WebSocket WhatsApp:
+
+```bash
+ssh -N -T -g \
+  -D 172.17.0.1:19443 \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 \
+  -o ServerAliveCountMax=3 \
+  USER@194.87.219.122
+```
+
+Проверка туннеля с Docker-хоста:
+
+```bash
+curl --socks5-hostname 172.17.0.1:19443 -I https://web.whatsapp.com/
+```
+
+Настройки Compose `.env` для этого режима:
+
+```env
+WHATSAPP_GATEWAY_IP=172.17.0.1
+WHATSAPP_GATEWAY_MODE=socks5
+WHATSAPP_GATEWAY_PORT=19443
+WHATSAPP_GATEWAY_HOSTS=
+```
+
+В режиме `socks5` список `WHATSAPP_GATEWAY_HOSTS` не используется: Chromium отправляет
+через SSH-прокси все HTTP(S)- и WebSocket-соединения, а DNS выполняется на SSH-сервере.
+
 Если `web.whatsapp.com` недоступен напрямую, можно направить его на прозрачный TCP-шлюз.
 Создайте рядом с `docker-compose.yml` файл `.env` (это именно Compose `.env`, не
 `env.prod`):
 
 ```env
 WHATSAPP_GATEWAY_IP=203.0.113.10
+WHATSAPP_GATEWAY_MODE=resolver
 WHATSAPP_GATEWAY_PORT=8443
 WHATSAPP_GATEWAY_HOSTS=web.whatsapp.com
 ```
