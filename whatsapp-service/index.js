@@ -4,6 +4,7 @@ const net = require("net");
 const path = require("path");
 const QRCode = require("qrcode");
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const { LoadUtils } = require("whatsapp-web.js/src/util/Injected/Utils");
 
 const port = Number(process.env.PORT || 3000);
 const token = process.env.WHATSAPP_SERVICE_TOKEN || "";
@@ -104,11 +105,14 @@ async function inspectWhatsAppPage(nextClient) {
       probeError = String(error?.message || error);
     }
     const hasWWebJS = typeof window.WWebJS !== "undefined";
-    const canSendMessage = typeof window.WWebJS?.sendMessage === "function";
+    const requiredUtils = ["sendMessage", "processMediaData", "getChat"];
+    const missingUtils = hasWWebJS ? requiredUtils.filter((name) => typeof window.WWebJS[name] !== "function") : requiredUtils;
+    const canSendMessage = missingUtils.length === 0;
     return {
       socketState,
       hasWWebJS,
       canSendMessage,
+      missingUtils,
       ready: socketState === "CONNECTED" && canSendMessage,
       error: probeError,
     };
@@ -143,6 +147,18 @@ function scheduleReadyRecovery(nextClient, delayMs = 5000) {
       console.log(`WhatsApp readiness probe #${readyRecoveryAttempts}: ${JSON.stringify(probe)}`);
       if (probe.ready) {
         markClientReady(nextClient, "readiness-probe");
+        return;
+      }
+      try {
+        await nextClient.pupPage.evaluate(LoadUtils);
+        console.log("WhatsApp utility injection completed directly");
+      } catch (error) {
+        console.error(`WhatsApp direct utility injection failed: ${error.message || error}`);
+      }
+      const injectedProbe = await inspectWhatsAppPage(nextClient);
+      console.log(`WhatsApp post-injection probe: ${JSON.stringify(injectedProbe)}`);
+      if (injectedProbe.ready) {
+        markClientReady(nextClient, "direct-utils-injection");
         return;
       }
       await nextClient.pupPage.evaluate(() => {
