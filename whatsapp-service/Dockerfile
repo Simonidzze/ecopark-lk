@@ -12,7 +12,7 @@ RUN apt-get update \
     && mkdir -p /data/whatsapp \
     && chown -R node:node /data/whatsapp
 
-COPY package.json ./
+COPY package.json patch-whatsapp-web.js ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY --chown=node:node index.js ./

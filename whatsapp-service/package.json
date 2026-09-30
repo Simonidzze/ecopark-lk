@@ -5,7 +5,8 @@
   "description": "Local WhatsApp Web bridge for Ecopark LK",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "postinstall": "node patch-whatsapp-web.js"
   },
   "dependencies": {
     "qrcode": "1.5.4",
