@@ -42,6 +42,10 @@ DEFAULT_PURPOSE_RULES = (
     ("security", "Яковец Валентин Иванович"),
 )
 
+PAYROLL_EMPLOYEE_FRAGMENTS = frozenset(
+    fragment for _category_id, fragment in DEFAULT_PURPOSE_RULES
+)
+
 CATEGORY_NAMES = dict(BUDGET_CATEGORIES)
 
 AUTO_RULES = (
@@ -196,7 +200,24 @@ def load_active_purpose_rules(session):
     )
 
 
-def match_purpose_rule(purpose, purpose_rules):
+def is_payroll_employee_fragment(value):
+    normalized_value = normalize_text(value)
+    return any(
+        normalized_value == normalize_text(fragment)
+        for fragment in PAYROLL_EMPLOYEE_FRAGMENTS
+    )
+
+
+def is_payroll_expense(expense):
+    expense_category = normalize_text(getattr(expense, "expense_category", ""))
+    return "зарплат" in expense_category or "заработн" in expense_category
+
+
+def is_payroll_detail(item):
+    return normalize_text(item.get("kind")) in {"payroll", "payroll_tax"}
+
+
+def match_purpose_rule(purpose, purpose_rules, allow_payroll_employee_rules=True):
     normalized_purpose = normalize_text(purpose)
     if not normalized_purpose:
         return None, ""
@@ -210,6 +231,11 @@ def match_purpose_rule(purpose, purpose_rules):
             category_id = getattr(rule, "category_id", None)
             fragment = getattr(rule, "purpose_contains", "")
         normalized_fragment = normalize_text(fragment)
+        if (
+            not allow_payroll_employee_rules
+            and is_payroll_employee_fragment(normalized_fragment)
+        ):
+            continue
         if category_id and normalized_fragment and normalized_fragment in normalized_purpose:
             return category_id, str(fragment).strip()
     return None, ""
@@ -289,6 +315,7 @@ def build_auto_allocations(expense, purpose_rules=()):
     category_id, matched_fragment = match_purpose_rule(
         getattr(expense, "purpose", ""),
         purpose_rules,
+        allow_payroll_employee_rules=is_payroll_expense(expense),
     )
     if category_id:
         return {
@@ -306,6 +333,7 @@ def build_auto_allocations(expense, purpose_rules=()):
         category_id, _matched_fragment = match_purpose_rule(
             item_text,
             purpose_rules,
+            allow_payroll_employee_rules=is_payroll_detail(item),
         )
         if not category_id:
             category_id = choose_budget_category(item_text)

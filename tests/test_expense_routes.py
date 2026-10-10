@@ -120,6 +120,7 @@ class ExpenseAllocationRoutesTest(unittest.TestCase):
     def test_creates_purpose_rule_and_recalculates_auto_expenses(self):
         with self.Session() as session:
             expense = session.get(Expense, "expense-1")
+            expense.expense_category = "Выплата заработной платы"
             expense.purpose = "Заработная плата за Ильиных Петра Сергеевича"
             session.commit()
 

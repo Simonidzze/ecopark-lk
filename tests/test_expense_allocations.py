@@ -56,6 +56,7 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
     def test_custom_purpose_rule_assigns_full_expense(self):
         allocations, reason = build_auto_allocations(
             self.expense(
+                expense_category="Выплата заработной платы",
                 purpose="Заработная плата за Ильиных Петра Сергеевича",
                 receipt_items_json=serialize_receipt_items(
                     [{"name": "Неизвестная позиция", "amount": "200.00"}]
@@ -101,6 +102,53 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
         self.assertEqual(reason, "receipt")
         self.assertEqual(
             allocations["accountant"]["amount"],
+            Decimal("1000.00"),
+        )
+
+    def test_employee_rule_does_not_classify_accountable_transfer_as_salary(self):
+        allocations, reason = build_auto_allocations(
+            self.expense(
+                expense_category="Выдача подотчетных сумм",
+                counterparty="Дорогин Артем Владимирович",
+                purpose="Списание подотчетных средств на Дорогина Артема Владимировича",
+            ),
+            purpose_rules=[
+                {
+                    "category_id": "chairman",
+                    "purpose_contains": "Дорогин Артем Владимирович",
+                }
+            ],
+        )
+
+        self.assertEqual(allocations, {})
+        self.assertEqual(reason, "")
+
+    def test_employee_rule_classifies_payroll_detail_only(self):
+        allocations, reason = build_auto_allocations(
+            self.expense(
+                expense_category="Списание подотчетных сумм",
+                purpose="Авансовый отчет Дорогина Артема Владимировича",
+                receipt_items_json=serialize_receipt_items(
+                    [
+                        {
+                            "name": "Зарплата: Дорогин Артем Владимирович",
+                            "amount": "1000.00",
+                            "kind": "payroll",
+                        }
+                    ]
+                ),
+            ),
+            purpose_rules=[
+                {
+                    "category_id": "chairman",
+                    "purpose_contains": "Дорогин Артем Владимирович",
+                }
+            ],
+        )
+
+        self.assertEqual(reason, "receipt")
+        self.assertEqual(
+            allocations["chairman"]["amount"],
             Decimal("1000.00"),
         )
 

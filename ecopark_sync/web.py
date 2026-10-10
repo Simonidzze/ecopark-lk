@@ -28,6 +28,7 @@ from .claims import (
 from .config import env, require_dependency
 from .db import make_session_factory
 from .expense_allocations import (
+    is_payroll_employee_fragment,
     money,
     normalize_text,
     refresh_auto_expense_allocations,
@@ -944,6 +945,9 @@ def create_app():
                     "category_id": rule.category_id,
                     "category_name": category_name or rule.category_id,
                     "purpose_contains": rule.purpose_contains,
+                    "payroll_only": is_payroll_employee_fragment(
+                        rule.purpose_contains
+                    ),
                     "active": rule.active,
                 }
                 for rule, category_name in rows
