@@ -6,13 +6,14 @@
   <form class="toolbar" method="get" action="{{ url_for('expenses') }}">
     <input class="input" type="date" name="date_from" value="{{ filters.date_from }}" aria-label="Дата с">
     <input class="input" type="date" name="date_to" value="{{ filters.date_to }}" aria-label="Дата по">
-    <select class="input" name="category" aria-label="Статья расхода">
-      <option value="">Все статьи</option>
+    <select class="input" name="category" aria-label="Статья сметы">
+      <option value="">Все статьи сметы</option>
+      <option value="unallocated" {% if filters.category == "unallocated" %}selected{% endif %}>Не распределено</option>
       {% for category in categories %}
-        <option value="{{ category }}" {% if filters.category == category %}selected{% endif %}>{{ category }}</option>
+        <option value="{{ category.id }}" {% if filters.category == category.id %}selected{% endif %}>{{ category.name }}</option>
       {% endfor %}
     </select>
-    <input class="input" type="search" name="q" value="{{ filters.q }}" placeholder="Документ, контрагент, назначение">
+    <input class="input" type="search" name="q" value="{{ filters.q }}" placeholder="Документ, статья, контрагент, назначение">
     <button class="button" type="submit">Показать</button>
     <a class="button secondary" href="{{ url_for('monthly_expenses') }}">По месяцам</a>
     <a
@@ -24,20 +25,29 @@
 
 {% block content %}
   {% if db_error %}
-    <div class="message error">MySQL недоступен или таблица расходов ещё не создана: {{ db_error }}</div>
+    <div class="message error">MySQL недоступен или схема расходов ещё не обновлена: {{ db_error }}</div>
   {% endif %}
 
-  <section class="metrics" aria-label="Статистика расходов">
+  <section class="metrics metrics-six" aria-label="Статистика расходов">
     <div class="metric">
       <div class="label">Расходов</div>
       <div class="value">{{ stats.count }}</div>
     </div>
     <div class="metric">
-      <div class="label">Сумма</div>
+      <div class="label">Общая сумма</div>
       <div class="value">{{ "%.2f"|format(stats.total or 0) }}</div>
     </div>
     <div class="metric">
-      <div class="label">Статей</div>
+      <div class="label">Распределено</div>
+      <div class="value">{{ "%.2f"|format(stats.allocated_total or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Не распределено</div>
+      <div class="value{% if stats.unallocated_total %} negative{% endif %}">{{ "%.2f"|format(stats.unallocated_total or 0) }}</div>
+      <div class="note">{{ stats.unallocated_count }} операций</div>
+    </div>
+    <div class="metric">
+      <div class="label">Статей сметы</div>
       <div class="value">{{ stats.categories }}</div>
     </div>
     <div class="metric">
@@ -45,6 +55,35 @@
       <div class="value">{{ stats.counterparties }}</div>
     </div>
   </section>
+
+  {% if stats.category_totals %}
+    <section class="section" style="margin-bottom: 20px;">
+      <div class="section-head">
+        <h2>Итого по статьям сметы</h2>
+        <span class="muted">По текущему фильтру</span>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Статья</th>
+              <th class="num">Операций</th>
+              <th class="num">Сумма</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for category in stats.category_totals %}
+              <tr>
+                <td>{{ category.category_name }}</td>
+                <td class="num">{{ category.operations }}</td>
+                <td class="num">{{ "%.2f"|format(category.amount or 0) }}</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  {% endif %}
 
   <section class="section">
     <div class="section-head">
@@ -59,21 +98,48 @@
           <tr>
             <th>Дата</th>
             <th>Документ</th>
-            <th>Статья</th>
-            <th>Контрагент</th>
-            <th>Назначение</th>
+            <th>Статьи сметы</th>
+            <th>Контрагент и назначение</th>
             <th class="num">Сумма</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
           {% for row in rows %}
             <tr>
               <td>{{ row.date.strftime("%d.%m.%Y") if row.date else "—" }}</td>
-              <td>{{ row.document or "—" }}{% if row.number %}<br><span class="muted">№ {{ row.number }}</span>{% endif %}</td>
-              <td>{{ row.expense_category or "Без статьи" }}</td>
-              <td>{{ row.counterparty or "—" }}</td>
-              <td>{{ row.purpose or "—" }}</td>
+              <td>
+                {{ row.document or "—" }}
+                {% if row.number %}<br><span class="muted">№ {{ row.number }}</span>{% endif %}
+                {% if row.expense_category %}<br><span class="muted">1С: {{ row.expense_category }}</span>{% endif %}
+              </td>
+              <td>
+                {% for allocation in row.allocations %}
+                  <div style="margin-bottom: 5px;">
+                    {{ allocation.category_name }}
+                    <span class="num" style="display: inline;">{{ "%.2f"|format(allocation.amount) }}</span>
+                    <span class="status {% if allocation.source == 'manual' %}ok{% endif %}">
+                      {{ "вручную" if allocation.source == "manual" else "авто" }}
+                    </span>
+                  </div>
+                {% endfor %}
+                {% if row.unallocated_amount > 0 %}
+                  <span class="status error">Не распределено {{ "%.2f"|format(row.unallocated_amount) }}</span>
+                {% elif row.unallocated_amount < 0 %}
+                  <span class="status error">Превышение {{ "%.2f"|format(-row.unallocated_amount) }}</span>
+                {% elif not row.allocations %}
+                  <span class="muted">Нет суммы для разнесения</span>
+                {% endif %}
+              </td>
+              <td>
+                <strong>{{ row.counterparty or "—" }}</strong>
+                {% if row.purpose %}<br>{{ row.purpose }}{% endif %}
+                {% if row.receipt_items_count %}
+                  <br><span class="status ok">Чек: {{ row.receipt_items_count }} позиций</span>
+                {% endif %}
+              </td>
               <td class="num">{{ "%.2f"|format(row.amount or 0) }} {{ row.currency or "" }}</td>
+              <td><a class="button secondary" href="{{ url_for('expense_detail', expense_id=row.id) }}">Разнести</a></td>
             </tr>
           {% else %}
             <tr>

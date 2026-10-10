@@ -8,7 +8,8 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from sqlalchemy import func, or_, select
 
 from .db import make_session_factory
-from .models import Expense
+from .expense_allocations import expense_receipt_items, money
+from .models import Expense, ExpenseAllocation, ExpenseBudgetCategory
 from .payment_report import XLSX_CONTENT_TYPE
 
 
@@ -28,11 +29,21 @@ def expense_filter_values(args):
     return {
         "q": str(args.get("q") or "").strip(),
         "category": str(args.get("category") or "").strip(),
+        "category_label": "",
         "date_from": date_from,
         "date_to": date_to,
         "date_from_value": date_from_value,
         "date_to_value": date_to_value,
     }
+
+
+def allocated_amount_subquery():
+    return (
+        select(func.coalesce(func.sum(ExpenseAllocation.amount), 0))
+        .where(ExpenseAllocation.expense_id == Expense.id)
+        .correlate(Expense)
+        .scalar_subquery()
+    )
 
 
 def build_expense_statement(filters):
@@ -44,6 +55,14 @@ def build_expense_statement(filters):
 
     if search:
         like = f"%{search}%"
+        budget_category_expenses = (
+            select(ExpenseAllocation.expense_id)
+            .join(
+                ExpenseBudgetCategory,
+                ExpenseBudgetCategory.id == ExpenseAllocation.category_id,
+            )
+            .where(ExpenseBudgetCategory.name.like(like))
+        )
         statement = statement.where(
             or_(
                 Expense.document.like(like),
@@ -52,10 +71,22 @@ def build_expense_statement(filters):
                 Expense.counterparty.like(like),
                 Expense.purpose.like(like),
                 Expense.organization.like(like),
+                Expense.id.in_(budget_category_expenses),
             )
         )
-    if category:
-        statement = statement.where(Expense.expense_category == category)
+    if category == "unallocated":
+        statement = statement.where(Expense.amount > allocated_amount_subquery())
+    elif category:
+        statement = statement.where(
+            or_(
+                Expense.expense_category == category,
+                Expense.id.in_(
+                    select(ExpenseAllocation.expense_id).where(
+                        ExpenseAllocation.category_id == category
+                    )
+                ),
+            )
+        )
     if date_from:
         statement = statement.where(Expense.date >= datetime.combine(date_from, time.min))
     if date_to:
@@ -64,31 +95,147 @@ def build_expense_statement(filters):
     return statement
 
 
+def attach_expense_allocations(session, rows):
+    expense_ids = [row.id for row in rows]
+    allocations_by_expense = {expense_id: [] for expense_id in expense_ids}
+    if expense_ids:
+        allocation_rows = session.execute(
+            select(
+                ExpenseAllocation,
+                ExpenseBudgetCategory.name,
+                ExpenseBudgetCategory.sort_order,
+            )
+            .join(
+                ExpenseBudgetCategory,
+                ExpenseBudgetCategory.id == ExpenseAllocation.category_id,
+            )
+            .where(ExpenseAllocation.expense_id.in_(expense_ids))
+            .order_by(
+                ExpenseAllocation.expense_id,
+                ExpenseBudgetCategory.sort_order,
+                ExpenseBudgetCategory.name,
+            )
+        ).all()
+        for allocation, category_name, _sort_order in allocation_rows:
+            allocations_by_expense.setdefault(allocation.expense_id, []).append(
+                {
+                    "category_id": allocation.category_id,
+                    "category_name": category_name,
+                    "amount": money(allocation.amount),
+                    "source": allocation.source,
+                    "details": allocation.details,
+                }
+            )
+
+    for row in rows:
+        row.allocations = allocations_by_expense.get(row.id, [])
+        row.allocated_amount = sum(
+            (allocation["amount"] for allocation in row.allocations),
+            Decimal("0.00"),
+        )
+        row.unallocated_amount = money(row.amount) - row.allocated_amount
+        row.receipt_items = expense_receipt_items(row)
+        row.receipt_items_count = len(row.receipt_items)
+    return rows
+
+
+def build_category_totals(rows):
+    totals = {}
+    for row in rows:
+        for allocation in row.allocations:
+            category_id = allocation["category_id"]
+            summary = totals.setdefault(
+                category_id,
+                {
+                    "category_id": category_id,
+                    "category_name": allocation["category_name"],
+                    "amount": Decimal("0.00"),
+                    "operations": 0,
+                },
+            )
+            summary["amount"] += allocation["amount"]
+            summary["operations"] += 1
+    return sorted(totals.values(), key=lambda item: (-item["amount"], item["category_name"]))
+
+
 def load_expense_report(filters):
     Session = make_session_factory()
     with Session() as session:
-        categories = list(
-            session.scalars(
-                select(Expense.expense_category)
-                .where(Expense.expense_category != "")
-                .distinct()
-                .order_by(Expense.expense_category)
-            ).all()
-        )
+        categories = session.scalars(
+            select(ExpenseBudgetCategory)
+            .where(ExpenseBudgetCategory.active.is_(True))
+            .order_by(
+                ExpenseBudgetCategory.sort_order,
+                ExpenseBudgetCategory.name,
+            )
+        ).all()
+        if filters.get("category") == "unallocated":
+            filters["category_label"] = "Не распределено"
+        else:
+            filters["category_label"] = next(
+                (
+                    category.name
+                    for category in categories
+                    if category.id == filters.get("category")
+                ),
+                filters.get("category", ""),
+            )
+
         rows = session.scalars(
             build_expense_statement(filters).order_by(
                 Expense.date.desc(), Expense.number.desc(), Expense.id
             )
         ).all()
+        attach_expense_allocations(session, rows)
         as_of = session.scalar(select(func.max(Expense.synced_at)))
 
+    allocated_total = sum(
+        (row.allocated_amount for row in rows),
+        Decimal("0.00"),
+    )
+    unallocated_total = sum(
+        (max(row.unallocated_amount, Decimal("0.00")) for row in rows),
+        Decimal("0.00"),
+    )
     stats = {
         "count": len(rows),
         "total": sum((Decimal(row.amount or 0) for row in rows), Decimal("0")),
-        "categories": len({row.expense_category for row in rows if row.expense_category}),
+        "allocated_total": allocated_total,
+        "unallocated_total": unallocated_total,
+        "unallocated_count": sum(1 for row in rows if row.unallocated_amount > 0),
+        "categories": len(
+            {
+                allocation["category_id"]
+                for row in rows
+                for allocation in row.allocations
+            }
+        ),
         "counterparties": len({row.counterparty for row in rows if row.counterparty}),
+        "category_totals": build_category_totals(rows),
     }
     return rows, stats, categories, as_of
+
+
+def load_expense_detail(expense_id):
+    Session = make_session_factory()
+    with Session() as session:
+        expense = session.get(Expense, expense_id)
+        if expense is None:
+            return None, []
+        attach_expense_allocations(session, [expense])
+        categories = session.scalars(
+            select(ExpenseBudgetCategory)
+            .where(ExpenseBudgetCategory.active.is_(True))
+            .order_by(
+                ExpenseBudgetCategory.sort_order,
+                ExpenseBudgetCategory.name,
+            )
+        ).all()
+    expense.allocation_amounts = {
+        allocation["category_id"]: allocation["amount"]
+        for allocation in expense.allocations
+    }
+    return expense, categories
 
 
 def build_monthly_expense_report(expense_rows, as_of):
@@ -192,6 +339,17 @@ def load_monthly_expense_report():
     return rows, latest, stats, as_of
 
 
+def allocation_label(row):
+    parts = [
+        f'{allocation["category_name"]}: {allocation["amount"]:.2f}'
+        for allocation in getattr(row, "allocations", [])
+    ]
+    unallocated = getattr(row, "unallocated_amount", money(row.amount))
+    if unallocated > 0:
+        parts.append(f"Не распределено: {unallocated:.2f}")
+    return "\n".join(parts) or "Не распределено"
+
+
 def render_expenses_xlsx(rows, stats, filters, as_of):
     workbook = Workbook()
     sheet = workbook.active
@@ -205,7 +363,7 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
     white = "FFFFFF"
     thin_gray = Side(style="thin", color=border_gray)
 
-    sheet.merge_cells("A1:J1")
+    sheet.merge_cells("A1:K1")
     sheet["A1"] = "Расходы ТСН «МИКРОРАЙОН ЭКОПАРК»"
     sheet["A1"].font = Font(size=16, bold=True, color=white)
     sheet["A1"].fill = PatternFill("solid", fgColor=dark_green)
@@ -228,10 +386,12 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
     if filters.get("date_to"):
         filter_parts.append(f"по {filters['date_to']}")
     if filters.get("category"):
-        filter_parts.append(f"статья: {filters['category']}")
+        filter_parts.append(
+            f"статья: {filters.get('category_label') or filters['category']}"
+        )
     if filters.get("q"):
         filter_parts.append(f"поиск: {filters['q']}")
-    sheet.merge_cells("A5:J5")
+    sheet.merge_cells("A5:K5")
     sheet["A5"] = "Фильтры: " + (", ".join(filter_parts) if filter_parts else "все расходы")
     sheet["A5"].font = Font(italic=True, color="667085")
 
@@ -241,7 +401,8 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
         "Дата",
         "Документ",
         "Номер",
-        "Статья расхода",
+        "Статьи сметы",
+        "Статья 1С",
         "Контрагент",
         "Назначение",
         "Сумма",
@@ -261,6 +422,7 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
             row.date,
             row.document,
             row.number,
+            allocation_label(row),
             row.expense_category,
             row.counterparty,
             row.purpose,
@@ -272,18 +434,24 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
         for column, value in enumerate(values, start=1):
             cell = sheet.cell(excel_row, column, value)
             cell.border = Border(right=thin_gray, bottom=thin_gray)
-            cell.alignment = Alignment(vertical="top", wrap_text=column in {3, 5, 6, 7, 10})
+            cell.alignment = Alignment(
+                vertical="top",
+                wrap_text=column in {3, 5, 6, 7, 8, 11},
+            )
             if excel_row % 2 == 1:
                 cell.fill = PatternFill("solid", fgColor=pale_green)
         sheet.cell(excel_row, 2).number_format = "dd/mm/yyyy"
-        sheet.cell(excel_row, 8).number_format = '#,##0.00 [$₽-ru-RU]'
-        sheet.row_dimensions[excel_row].height = 34
+        sheet.cell(excel_row, 9).number_format = '#,##0.00 [$₽-ru-RU]'
+        sheet.row_dimensions[excel_row].height = max(
+            34,
+            15 * max(1, allocation_label(row).count("\n") + 1),
+        )
 
     table_end = max(header_row + len(rows), header_row + 1)
     if not rows:
         for column in range(1, len(headers) + 1):
             sheet.cell(header_row + 1, column, "")
-    table = Table(displayName="ExpensesTable", ref=f"A{header_row}:J{table_end}")
+    table = Table(displayName="ExpensesTable", ref=f"A{header_row}:K{table_end}")
     table.tableStyleInfo = TableStyleInfo(
         name="TableStyleMedium4",
         showFirstColumn=False,
@@ -292,18 +460,19 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
         showColumnStripes=False,
     )
     sheet.add_table(table)
-    sheet.freeze_panes = f"E{header_row + 1}"
-    sheet.auto_filter.ref = f"A{header_row}:J{table_end}"
-    sheet.column_dimensions["A"].width = 18
-    sheet.column_dimensions["B"].width = 18
-    sheet.column_dimensions["C"].width = 26
+    sheet.freeze_panes = f"F{header_row + 1}"
+    sheet.auto_filter.ref = f"A{header_row}:K{table_end}"
+    sheet.column_dimensions["A"].width = 8
+    sheet.column_dimensions["B"].width = 14
+    sheet.column_dimensions["C"].width = 24
     sheet.column_dimensions["D"].width = 14
-    sheet.column_dimensions["E"].width = 28
-    sheet.column_dimensions["F"].width = 28
-    sheet.column_dimensions["G"].width = 42
-    sheet.column_dimensions["H"].width = 16
-    sheet.column_dimensions["I"].width = 10
-    sheet.column_dimensions["J"].width = 30
+    sheet.column_dimensions["E"].width = 38
+    sheet.column_dimensions["F"].width = 24
+    sheet.column_dimensions["G"].width = 28
+    sheet.column_dimensions["H"].width = 42
+    sheet.column_dimensions["I"].width = 16
+    sheet.column_dimensions["J"].width = 10
+    sheet.column_dimensions["K"].width = 30
     sheet.sheet_properties.pageSetUpPr.fitToPage = True
     sheet.page_setup.fitToWidth = 1
     sheet.page_setup.fitToHeight = 0

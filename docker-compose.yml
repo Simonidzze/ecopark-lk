@@ -11,6 +11,7 @@ services:
       TZ: Asia/Novosibirsk
       WHATSAPP_SERVICE_URL: http://whatsapp:3000
       WHATSAPP_AUTO_INIT_SCHEMA: "true"
+      EXPENSE_AUTO_INIT_SCHEMA: "true"
     ports:
       - "8080:8080"
     volumes:

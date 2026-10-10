@@ -252,6 +252,8 @@ class Expense(Base):
     counterparty_id: Mapped[str] = mapped_column(String(64), nullable=False)
     counterparty: Mapped[str] = mapped_column(String(255), nullable=False)
     purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    receipt_items_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    allocation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     organization_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -259,6 +261,35 @@ class Expense(Base):
     source: Mapped[str] = mapped_column(String(128), nullable=False)
     sync_run_id: Mapped[int] = mapped_column(Integer, nullable=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ExpenseBudgetCategory(Base):
+    __tablename__ = "expense_budget_categories"
+    __table_args__ = (
+        Index("idx_expense_budget_categories_order", "sort_order", "name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ExpenseAllocation(Base):
+    __tablename__ = "expense_allocations"
+    __table_args__ = (
+        Index("idx_expense_allocations_expense_id", "expense_id"),
+        Index("idx_expense_allocations_category_id", "category_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    expense_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    category_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
+    details: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class PretrialClaim(Base):

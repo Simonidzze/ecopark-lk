@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+
+{% block title %}Разнесение расхода - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button secondary" href="{{ url_for('expenses') }}">К расходам</a>
+{% endblock %}
+
+{% block content %}
+  <section class="metrics" aria-label="Состояние разнесения">
+    <div class="metric">
+      <div class="label">Сумма расхода</div>
+      <div class="value">{{ "%.2f"|format(expense.amount or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Распределено</div>
+      <div class="value" id="allocated-total">{{ "%.2f"|format(expense.allocated_amount or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Остаток</div>
+      <div class="value{% if expense.unallocated_amount %} negative{% endif %}" id="unallocated-total">{{ "%.2f"|format(expense.unallocated_amount or 0) }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Режим</div>
+      <div class="value" style="font-size: 17px;">
+        {% if expense.allocation_mode == "manual" %}
+          <span class="status ok">Ручное разнесение</span>
+        {% else %}
+          <span class="status">Автоматическое</span>
+        {% endif %}
+      </div>
+    </div>
+  </section>
+
+  <div class="grid grid-even">
+    <section class="section">
+      <div class="section-head">
+        <h2>Операция из 1С</h2>
+      </div>
+      <div class="form-body">
+        <p><strong>{{ expense.document or "Расход" }}{% if expense.number %} № {{ expense.number }}{% endif %}</strong></p>
+        <p class="muted">{{ expense.date.strftime("%d.%m.%Y %H:%M") if expense.date else "Дата не указана" }}</p>
+        <p><strong>Контрагент:</strong> {{ expense.counterparty or "—" }}</p>
+        <p><strong>Исходная статья 1С:</strong> {{ expense.expense_category or "—" }}</p>
+        <p><strong>Назначение:</strong><br>{{ expense.purpose or "—" }}</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Позиции чека</h2>
+        <span class="muted">{{ expense.receipt_items_count }}</span>
+      </div>
+      {% if expense.receipt_items %}
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Наименование</th>
+                <th class="num">Кол-во</th>
+                <th class="num">Цена</th>
+                <th class="num">Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in expense.receipt_items %}
+                <tr>
+                  <td>{{ item.get("name") or item.get("title") or item.get("product") or item.get("description") or "—" }}</td>
+                  <td class="num">{{ item.get("quantity") or "—" }}</td>
+                  <td class="num">{{ item.get("price") or "—" }}</td>
+                  <td class="num">{{ item.get("amount") or item.get("sum") or item.get("total") or "—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <div class="form-body muted">
+          1С пока не передаёт состав чека. После добавления массива <code>receipt_items</code>
+          позиции появятся здесь и будут участвовать в автоматическом разнесении.
+        </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <section class="section" style="margin-top: 16px;">
+    <div class="section-head">
+      <h2>Разнести по статьям сметы</h2>
+      <span class="muted">Можно заполнить несколько строк; сумма не должна превышать расход</span>
+    </div>
+    <form method="post" action="{{ url_for('save_expense_allocations', expense_id=expense.id) }}">
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Статья сметы</th>
+              <th class="num">Сумма, руб.</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for category in categories %}
+              {% set current_amount = expense.allocation_amounts.get(category.id) %}
+              <tr>
+                <td>{{ category.name }}</td>
+                <td class="num" style="width: 220px;">
+                  <input
+                    class="input allocation-amount"
+                    style="min-width: 160px; text-align: right;"
+                    type="number"
+                    min="0"
+                    max="{{ '%.2f'|format(expense.amount or 0) }}"
+                    step="0.01"
+                    name="allocation_{{ category.id }}"
+                    value="{{ '%.2f'|format(current_amount) if current_amount is not none else '' }}"
+                    aria-label="Сумма: {{ category.name }}"
+                  >
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="form-body">
+        <button class="button" type="submit">Сохранить ручное разнесение</button>
+        <p class="muted" style="margin-bottom: 0;">
+          После сохранения выбранные статьи и суммы фиксируются и не перезаписываются
+          следующими синхронизациями с 1С. Незаполненная часть останется «не распределено».
+        </p>
+      </div>
+    </form>
+  </section>
+
+  <section class="section" style="margin-top: 16px;">
+    <div class="form-body">
+      <form method="post" action="{{ url_for('auto_expense_allocations', expense_id=expense.id) }}">
+        <button class="button secondary" type="submit">Пересчитать автоматически</button>
+        <span class="muted">Текущее ручное разнесение будет заменено результатом правил.</span>
+      </form>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    (() => {
+      const total = Number({{ "%.2f"|format(expense.amount or 0) }});
+      const fields = [...document.querySelectorAll(".allocation-amount")];
+      const allocatedNode = document.getElementById("allocated-total");
+      const unallocatedNode = document.getElementById("unallocated-total");
+
+      const updateTotals = () => {
+        const allocated = fields.reduce((sum, field) => {
+          const value = Number(String(field.value || "").replace(",", "."));
+          return sum + (Number.isFinite(value) ? value : 0);
+        }, 0);
+        const remainder = total - allocated;
+        allocatedNode.textContent = allocated.toFixed(2);
+        unallocatedNode.textContent = remainder.toFixed(2);
+        unallocatedNode.classList.toggle("negative", Math.abs(remainder) > 0.005);
+      };
+
+      fields.forEach((field) => field.addEventListener("input", updateTotals));
+      updateTotals();
+    })();
+  </script>
+{% endblock %}

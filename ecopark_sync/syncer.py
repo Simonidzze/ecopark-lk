@@ -1,6 +1,13 @@
+from collections import defaultdict
+
 from sqlalchemy import delete
 
 from .db import make_session_factory, upsert_many
+from .expense_allocations import (
+    normalize_receipt_items,
+    refresh_auto_expense_allocations_for_ids,
+    serialize_receipt_items,
+)
 from .models import Accrual, Balance, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, SyncRun
 from .utils import now_utc_naive, parse_datetime, parse_decimal, text
 
@@ -184,7 +191,51 @@ def sync_accruals(session, snapshot, run_id, synced_at):
     upsert_many(session, Accrual, rows)
 
 
+def linked_advance_report_items(snapshot):
+    expenses_by_document = defaultdict(list)
+    for expense in snapshot.get("expenses", []):
+        document = text(expense.get("document"))
+        if document and expense.get("document_id"):
+            expenses_by_document[document].append(expense)
+
+    documents_by_key = defaultdict(set)
+    for advance in snapshot.get("advance_report_advances", []):
+        report_key = text(advance.get("report_key"))
+        document = text(advance.get("document"))
+        matching_expenses = expenses_by_document.get(document, [])
+        if not report_key or len(matching_expenses) != 1:
+            continue
+        expense = matching_expenses[0]
+        key = (report_key, parse_decimal(expense.get("amount")))
+        documents_by_key[key].add(text(expense.get("document_id")))
+
+    items_by_key = defaultdict(list)
+    for item in snapshot.get("advance_report_items", []):
+        report_key = text(item.get("report_key"))
+        if not report_key:
+            continue
+        key = (report_key, parse_decimal(item.get("amount")))
+        items_by_key[key].append(item)
+
+    linked = defaultdict(list)
+    for key, items in items_by_key.items():
+        document_ids = documents_by_key.get(key, set())
+        if len(items) != 1 or len(document_ids) != 1:
+            continue
+        item = dict(items[0])
+        report_key = text(item.pop("report_key", ""))
+        receipt_line = text(item.get("receipt_line"))
+        item.setdefault(
+            "receipt_id",
+            f"{report_key}:{receipt_line}",
+        )
+        item.setdefault("advance_report", report_key)
+        linked[next(iter(document_ids))].append(item)
+    return linked
+
+
 def sync_expenses(session, snapshot, run_id, synced_at):
+    advance_items = linked_advance_report_items(snapshot)
     rows = [
         {
             "id": text(item.get("id")),
@@ -197,6 +248,10 @@ def sync_expenses(session, snapshot, run_id, synced_at):
             "counterparty_id": text(item.get("counterparty_id")),
             "counterparty": text(item.get("counterparty")),
             "purpose": text(item.get("purpose")),
+            "receipt_items_json": serialize_receipt_items(
+                normalize_receipt_items(item.get("receipt_items"))
+                + advance_items.get(text(item.get("document_id")), [])
+            ),
             "amount": parse_decimal(item.get("amount")),
             "currency": text(item.get("currency") or "RUB"),
             "organization_id": text(item.get("organization_id")),
@@ -208,7 +263,11 @@ def sync_expenses(session, snapshot, run_id, synced_at):
         for item in snapshot.get("expenses", [])
         if item.get("id")
     ]
-    upsert_many(session, Expense, rows)
+    upsert_many(session, Expense, rows, preserve_columns=("allocation_mode",))
+    refresh_auto_expense_allocations_for_ids(
+        session,
+        [row["id"] for row in rows],
+    )
 
 
 def sync_incomes(session, snapshot, run_id, synced_at):

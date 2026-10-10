@@ -1,18 +1,69 @@
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
+from sqlalchemy.dialects.mysql import insert
+from sqlalchemy.orm import Session
 
 from .db import get_engine
-from .models import Base, WhatsAppMessage
+from .expense_allocations import BUDGET_CATEGORIES, refresh_auto_expense_allocations
+from .models import (
+    Base,
+    Expense,
+    ExpenseAllocation,
+    ExpenseBudgetCategory,
+    WhatsAppMessage,
+)
 
 
 def init_schema():
     engine = get_engine()
     Base.metadata.create_all(engine)
     apply_lightweight_upgrades(engine)
+    seed_expense_budget_categories(engine)
+    refresh_existing_auto_allocations(engine)
 
 
 def ensure_whatsapp_schema():
     """Create only the WhatsApp queue table without changing existing data."""
     WhatsAppMessage.__table__.create(get_engine(), checkfirst=True)
+
+
+def ensure_expense_schema():
+    """Create and upgrade expense allocation storage, then classify auto-mode rows."""
+    engine = get_engine()
+    ExpenseBudgetCategory.__table__.create(engine, checkfirst=True)
+    ExpenseAllocation.__table__.create(engine, checkfirst=True)
+    apply_lightweight_upgrades(engine)
+    seed_expense_budget_categories(engine)
+    refresh_existing_auto_allocations(engine)
+
+
+def seed_expense_budget_categories(engine):
+    rows = [
+        {
+            "id": category_id,
+            "name": name,
+            "sort_order": index,
+            "active": True,
+        }
+        for index, (category_id, name) in enumerate(BUDGET_CATEGORIES, start=1)
+    ]
+    statement = insert(ExpenseBudgetCategory).values(rows)
+    with engine.begin() as connection:
+        connection.execute(
+            statement.on_duplicate_key_update(
+                name=statement.inserted.name,
+                sort_order=statement.inserted.sort_order,
+                active=statement.inserted.active,
+            )
+        )
+
+
+def refresh_existing_auto_allocations(engine):
+    with Session(engine, future=True) as session:
+        expenses = session.scalars(
+            select(Expense).where(Expense.allocation_mode == "auto")
+        ).all()
+        refresh_auto_expense_allocations(session, expenses)
+        session.commit()
 
 
 def apply_lightweight_upgrades(engine):
@@ -33,6 +84,22 @@ def apply_lightweight_upgrades(engine):
         )
     if "call_attempts" in columns_by_table and "source_file" not in columns_by_table["call_attempts"]:
         statements.append("ALTER TABLE call_attempts ADD COLUMN source_file VARCHAR(255) NOT NULL DEFAULT '' AFTER comment")
+    if "expenses" in columns_by_table:
+        expense_columns = columns_by_table["expenses"]
+        if "receipt_items_json" not in expense_columns:
+            statements.append(
+                "ALTER TABLE expenses ADD COLUMN receipt_items_json TEXT NULL AFTER purpose"
+            )
+        if "allocation_mode" not in expense_columns:
+            after_column = (
+                "receipt_items_json"
+                if "receipt_items_json" in expense_columns
+                else "purpose"
+            )
+            statements.append(
+                "ALTER TABLE expenses ADD COLUMN allocation_mode "
+                f"VARCHAR(16) NOT NULL DEFAULT 'auto' AFTER {after_column}"
+            )
 
     if not statements:
         return
@@ -40,3 +107,13 @@ def apply_lightweight_upgrades(engine):
     with engine.begin() as connection:
         for statement in statements:
             connection.execute(text(statement))
+        if (
+            "expenses" in columns_by_table
+            and "receipt_items_json" not in columns_by_table["expenses"]
+        ):
+            connection.execute(
+                text(
+                    "UPDATE expenses SET receipt_items_json = '[]' "
+                    "WHERE receipt_items_json IS NULL OR receipt_items_json = ''"
+                )
+            )

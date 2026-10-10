@@ -27,13 +27,19 @@ from .claims import (
 )
 from .config import env, require_dependency
 from .db import make_session_factory
+from .expense_allocations import (
+    money,
+    refresh_auto_expense_allocations,
+    replace_manual_allocations,
+)
 from .expense_report import (
     expense_filter_values,
+    load_expense_detail,
     load_expense_report,
     load_monthly_expense_report,
     render_expenses_xlsx,
 )
-from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun, WhatsAppMessage
+from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, ExpenseBudgetCategory, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun, WhatsAppMessage
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
 from .whatsapp import (
@@ -703,6 +709,14 @@ def create_app():
         except Exception:
             app.logger.exception("Не удалось автоматически создать таблицу WhatsApp")
 
+    if env("EXPENSE_AUTO_INIT_SCHEMA", "false").lower() in {"1", "true", "yes", "y"}:
+        try:
+            from .schema import ensure_expense_schema
+
+            ensure_expense_schema()
+        except Exception:
+            app.logger.exception("Не удалось подготовить разнесение расходов")
+
     @app.get("/")
     def index():
         return redirect(url_for("admin"))
@@ -830,8 +844,12 @@ def create_app():
         stats = {
             "count": 0,
             "total": Decimal("0"),
+            "allocated_total": Decimal("0"),
+            "unallocated_total": Decimal("0"),
+            "unallocated_count": 0,
             "categories": 0,
             "counterparties": 0,
+            "category_totals": [],
         }
         filters = expense_filter_values(request.args)
 
@@ -849,6 +867,80 @@ def create_app():
             as_of=as_of,
             db_error=db_error,
         )
+
+    @app.get("/admin/expenses/<expense_id>")
+    def expense_detail(expense_id):
+        expense, categories = load_expense_detail(expense_id)
+        if expense is None:
+            abort(404)
+        return render_template(
+            "expense_detail.html",
+            expense=expense,
+            categories=categories,
+        )
+
+    @app.post("/admin/expenses/<expense_id>/allocations")
+    def save_expense_allocations(expense_id):
+        Session = make_session_factory()
+        with Session() as session:
+            expense = session.get(Expense, expense_id)
+            if expense is None:
+                abort(404)
+            categories = session.scalars(
+                select(ExpenseBudgetCategory)
+                .where(ExpenseBudgetCategory.active.is_(True))
+                .order_by(
+                    ExpenseBudgetCategory.sort_order,
+                    ExpenseBudgetCategory.name,
+                )
+            ).all()
+            amounts = {}
+            try:
+                for category in categories:
+                    raw_value = request.form.get(f"allocation_{category.id}", "").strip()
+                    if not raw_value:
+                        continue
+                    amount = money(Decimal(raw_value.replace(" ", "").replace(",", ".")))
+                    if amount < 0:
+                        raise ValueError("Сумма по статье не может быть отрицательной")
+                    if amount > 0:
+                        amounts[category.id] = amount
+            except Exception as exc:
+                abort(400, description=f"Некорректная сумма разнесения: {exc}")
+
+            allocated_total = sum(amounts.values(), Decimal("0.00"))
+            expense_total = money(expense.amount)
+            if allocated_total > expense_total:
+                abort(
+                    400,
+                    description=(
+                        f"Разнесено {allocated_total:.2f}, но сумма расхода "
+                        f"{expense_total:.2f}"
+                    ),
+                )
+
+            replace_manual_allocations(session, expense, amounts)
+            session.commit()
+
+        remainder = expense_total - allocated_total
+        flash(
+            f"Ручное разнесение сохранено. Не распределено: {remainder:.2f} руб.",
+            "success",
+        )
+        return redirect(url_for("expense_detail", expense_id=expense_id))
+
+    @app.post("/admin/expenses/<expense_id>/allocations/auto")
+    def auto_expense_allocations(expense_id):
+        Session = make_session_factory()
+        with Session() as session:
+            expense = session.get(Expense, expense_id)
+            if expense is None:
+                abort(404)
+            refresh_auto_expense_allocations(session, [expense], force=True)
+            session.commit()
+
+        flash("Автоматическое разнесение пересчитано", "success")
+        return redirect(url_for("expense_detail", expense_id=expense_id))
 
     @app.get("/admin/incomes")
     def incomes():
