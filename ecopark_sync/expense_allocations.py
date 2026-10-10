@@ -32,7 +32,14 @@ BUDGET_CATEGORIES = (
 )
 
 DEFAULT_PURPOSE_RULES = (
+    ("chairman", "Дорогин Артем Владимирович"),
+    ("accountant", "Костенко Татьяна Гергартовна"),
+    ("security", "Ильиных Петр Сергеевич"),
     ("security", "Ильиных Петра Сергеевича"),
+    ("security", "Леготин Юрий Валентинович"),
+    ("security", "Черников Константин Васильевич"),
+    ("security", "Южаков Василий Николаевич"),
+    ("security", "Яковец Валентин Иванович"),
 )
 
 CATEGORY_NAMES = dict(BUDGET_CATEGORIES)
@@ -296,7 +303,12 @@ def build_auto_allocations(expense, purpose_rules=()):
     for item in expense_receipt_items(expense):
         item_amount = receipt_item_amount(item)
         item_text = receipt_item_text(item)
-        category_id = choose_budget_category(item_text)
+        category_id, _matched_fragment = match_purpose_rule(
+            item_text,
+            purpose_rules,
+        )
+        if not category_id:
+            category_id = choose_budget_category(item_text)
         if category_id and item_amount > 0:
             item_allocations[category_id] += item_amount
             if item_text:
@@ -319,7 +331,7 @@ def build_auto_allocations(expense, purpose_rules=()):
             {
                 category_id: {
                     "amount": money(amount),
-                    "details": "Позиции чека: " + "; ".join(item_names[category_id][:3]),
+                    "details": "Детализация из 1С: " + "; ".join(item_names[category_id][:3]),
                 }
                 for category_id, amount in item_allocations.items()
                 if amount > 0

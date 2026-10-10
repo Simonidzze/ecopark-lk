@@ -4,6 +4,7 @@ from sqlalchemy import delete
 
 from .db import make_session_factory, upsert_many
 from .expense_allocations import (
+    money,
     normalize_receipt_items,
     refresh_auto_expense_allocations_for_ids,
     serialize_receipt_items,
@@ -234,8 +235,237 @@ def linked_advance_report_items(snapshot):
     return linked
 
 
+def normalized_person_name(value):
+    return " ".join(text(value).lower().replace("ё", "е").split())
+
+
+def proportional_amounts(total, weighted_items):
+    total = max(money(total), money(0))
+    weights = [
+        (key, max(parse_decimal(weight), parse_decimal(0)))
+        for key, weight in weighted_items
+        if parse_decimal(weight) > 0
+    ]
+    weight_total = sum((weight for _key, weight in weights), parse_decimal(0))
+    if total <= 0 or weight_total <= 0:
+        return {}
+    amounts = {
+        key: money(total * weight / weight_total)
+        for key, weight in weights
+    }
+    difference = total - sum(amounts.values(), money(0))
+    if difference:
+        largest_key = max(weights, key=lambda item: item[1])[0]
+        amounts[largest_key] += difference
+    return amounts
+
+
+def payroll_item(employee, amount, kind, source, period=""):
+    label = "Налог с зарплаты" if kind == "payroll_tax" else "Зарплата"
+    return {
+        "name": f"{label}: {employee}",
+        "employee": employee,
+        "amount": str(money(amount)),
+        "kind": kind,
+        "source": source,
+        "payroll_period": period,
+    }
+
+
+def linked_payroll_statement_items(snapshot):
+    expenses_by_document_id = {
+        text(expense.get("document_id")): expense
+        for expense in snapshot.get("expenses", [])
+        if expense.get("document_id")
+    }
+    statement_items = defaultdict(lambda: defaultdict(lambda: {
+        "employee": "",
+        "amount": parse_decimal(0),
+        "period": "",
+    }))
+    for item in snapshot.get("payroll_statement_items", []):
+        statement_id = text(item.get("statement_id"))
+        employee = text(item.get("employee")).strip()
+        employee_key = normalized_person_name(employee)
+        if not statement_id or not employee_key:
+            continue
+        summary = statement_items[statement_id][employee_key]
+        summary["employee"] = employee
+        summary["amount"] += parse_decimal(item.get("amount"))
+        summary["period"] = text(item.get("period"))
+
+    links = {}
+    for link in snapshot.get("payroll_expense_links", []):
+        document_id = text(link.get("document_id"))
+        statement_id = text(link.get("statement_id"))
+        if not document_id or not statement_id or document_id not in expenses_by_document_id:
+            continue
+        key = (document_id, statement_id)
+        current = links.setdefault(
+            key,
+            {
+                "document_id": document_id,
+                "statement_id": statement_id,
+                "employee": "",
+            },
+        )
+        employee = text(link.get("employee")).strip()
+        if employee:
+            current["employee"] = employee
+
+    for link in links.values():
+        if link["employee"]:
+            continue
+        expense = expenses_by_document_id[link["document_id"]]
+        expense_text = normalized_person_name(
+            " ".join(
+                text(expense.get(key))
+                for key in ("counterparty", "purpose")
+            )
+        )
+        matches = [
+            employee_data["employee"]
+            for employee_key, employee_data in statement_items.get(
+                link["statement_id"], {}
+            ).items()
+            if employee_key and employee_key in expense_text
+        ]
+        if len(matches) == 1:
+            link["employee"] = matches[0]
+
+    links_by_statement = defaultdict(list)
+    for link in links.values():
+        links_by_statement[link["statement_id"]].append(link)
+
+    linked = defaultdict(list)
+    for statement_id, statement_links in links_by_statement.items():
+        employees = statement_items.get(statement_id, {})
+        if not employees:
+            continue
+        direct_employee_keys = {
+            normalized_person_name(link["employee"])
+            for link in statement_links
+            if link["employee"]
+        }
+        for link in statement_links:
+            if not link["employee"]:
+                continue
+            expense = expenses_by_document_id[link["document_id"]]
+            employee_key = normalized_person_name(link["employee"])
+            employee_data = employees.get(employee_key, {})
+            employee = employee_data.get("employee") or link["employee"]
+            linked[link["document_id"]].append(
+                payroll_item(
+                    employee,
+                    expense.get("amount"),
+                    "payroll",
+                    "Зарплатная ведомость 1С",
+                    employee_data.get("period", ""),
+                )
+            )
+
+        collective_links = [link for link in statement_links if not link["employee"]]
+        remaining = [
+            (employee_key, employee_data)
+            for employee_key, employee_data in employees.items()
+            if employee_key not in direct_employee_keys
+        ]
+        if len(collective_links) != 1 or not remaining:
+            continue
+        link = collective_links[0]
+        expense = expenses_by_document_id[link["document_id"]]
+        amounts = proportional_amounts(
+            expense.get("amount"),
+            [
+                (employee_key, employee_data["amount"])
+                for employee_key, employee_data in remaining
+            ],
+        )
+        for employee_key, employee_data in remaining:
+            amount = amounts.get(employee_key, money(0))
+            if amount <= 0:
+                continue
+            linked[link["document_id"]].append(
+                payroll_item(
+                    employee_data["employee"],
+                    amount,
+                    "payroll",
+                    "Зарплатная ведомость 1С",
+                    employee_data["period"],
+                )
+            )
+    return linked
+
+
+def linked_payroll_tax_items(snapshot):
+    expenses_by_document_id = {
+        text(expense.get("document_id")): expense
+        for expense in snapshot.get("expenses", [])
+        if expense.get("document_id")
+    }
+    weights = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: parse_decimal(0))))
+    employee_names = {}
+    for item in snapshot.get("payroll_accrual_taxes", []):
+        period = text(item.get("period"))[:7]
+        kind = text(item.get("kind"))
+        employee = text(item.get("employee")).strip()
+        employee_key = normalized_person_name(employee)
+        amount = parse_decimal(item.get("amount"))
+        if not period or not kind or not employee_key or amount <= 0:
+            continue
+        employee_names[employee_key] = employee
+        weights[period][kind][employee_key] += amount
+
+    linked = defaultdict(list)
+    for tax_expense in snapshot.get("payroll_tax_expenses", []):
+        document_id = text(tax_expense.get("document_id"))
+        expense = expenses_by_document_id.get(document_id)
+        if expense is None:
+            continue
+        period = text(tax_expense.get("tax_period"))[:7]
+        period_weights = weights.get(period, {})
+        tax_text = " ".join(
+            text(tax_expense.get(key)).lower()
+            for key in ("tax", "purpose", "expense_category")
+        )
+        kinds = (
+            ("accident_insurance",)
+            if "несчаст" in tax_text
+            else ("income_tax", "insurance")
+        )
+        employee_weights = defaultdict(lambda: parse_decimal(0))
+        for kind in kinds:
+            for employee_key, amount in period_weights.get(kind, {}).items():
+                employee_weights[employee_key] += amount
+        amounts = proportional_amounts(
+            expense.get("amount"),
+            list(employee_weights.items()),
+        )
+        for employee_key, amount in amounts.items():
+            if amount <= 0:
+                continue
+            linked[document_id].append(
+                payroll_item(
+                    employee_names[employee_key],
+                    amount,
+                    "payroll_tax",
+                    text(tax_expense.get("tax")) or "Налоги по зарплате",
+                    period,
+                )
+            )
+    return linked
+
+
+def linked_payroll_items(snapshot):
+    linked = linked_payroll_statement_items(snapshot)
+    for document_id, items in linked_payroll_tax_items(snapshot).items():
+        linked[document_id].extend(items)
+    return linked
+
+
 def sync_expenses(session, snapshot, run_id, synced_at):
     advance_items = linked_advance_report_items(snapshot)
+    payroll_items = linked_payroll_items(snapshot)
     rows = [
         {
             "id": text(item.get("id")),
@@ -251,6 +481,7 @@ def sync_expenses(session, snapshot, run_id, synced_at):
             "receipt_items_json": serialize_receipt_items(
                 normalize_receipt_items(item.get("receipt_items"))
                 + advance_items.get(text(item.get("document_id")), [])
+                + payroll_items.get(text(item.get("document_id")), [])
             ),
             "amount": parse_decimal(item.get("amount")),
             "currency": text(item.get("currency") or "RUB"),

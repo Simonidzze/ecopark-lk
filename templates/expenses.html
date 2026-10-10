@@ -140,7 +140,7 @@
                 <strong>{{ row.counterparty or "—" }}</strong>
                 {% if row.purpose %}<br>{{ row.purpose }}{% endif %}
                 {% if row.receipt_items_count %}
-                  <br><span class="status ok">Чек: {{ row.receipt_items_count }} позиций</span>
+                  <br><span class="status ok">Детализация: {{ row.receipt_items_count }} позиций</span>
                 {% endif %}
               </td>
               <td class="num">{{ "%.2f"|format(row.amount or 0) }} {{ row.currency or "" }}</td>

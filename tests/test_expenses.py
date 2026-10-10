@@ -14,6 +14,7 @@ from ecopark_sync.payment_report import XLSX_CONTENT_TYPE
 from ecopark_sync.models import Expense
 from ecopark_sync.syncer import (
     linked_advance_report_items,
+    linked_payroll_items,
     sync_expenses,
     synced_models_for_snapshot,
 )
@@ -122,6 +123,89 @@ class ExpenseSyncTest(unittest.TestCase):
             "Авансовый отчет 1:1",
         )
         self.assertNotIn("report_key", linked["doc-1"][0])
+
+    def test_links_collective_and_direct_payroll_expenses_without_duplication(self):
+        snapshot = {
+            "expenses": [
+                {"document_id": "direct", "amount": "20.00"},
+                {"document_id": "collective", "amount": "80.00"},
+                {"document_id": "tax", "amount": "40.00"},
+            ],
+            "payroll_statement_items": [
+                {
+                    "statement_id": "statement-1",
+                    "employee": "Ильиных Петр Сергеевич",
+                    "amount": "20.00",
+                    "period": "2026-09-01T00:00:00",
+                },
+                {
+                    "statement_id": "statement-1",
+                    "employee": "Дорогин Артем Владимирович",
+                    "amount": "50.00",
+                    "period": "2026-09-01T00:00:00",
+                },
+                {
+                    "statement_id": "statement-1",
+                    "employee": "Костенко Татьяна Гергартовна",
+                    "amount": "30.00",
+                    "period": "2026-09-01T00:00:00",
+                },
+            ],
+            "payroll_expense_links": [
+                {
+                    "document_id": "direct",
+                    "statement_id": "statement-1",
+                    "employee": "Ильиных Петр Сергеевич",
+                },
+                {
+                    "document_id": "collective",
+                    "statement_id": "statement-1",
+                    "employee": "",
+                },
+            ],
+            "payroll_accrual_taxes": [
+                {
+                    "period": "2026-09-01T00:00:00",
+                    "employee": "Дорогин Артем Владимирович",
+                    "kind": "income_tax",
+                    "amount": "30.00",
+                },
+                {
+                    "period": "2026-09-01T00:00:00",
+                    "employee": "Костенко Татьяна Гергартовна",
+                    "kind": "insurance",
+                    "amount": "10.00",
+                },
+            ],
+            "payroll_tax_expenses": [
+                {
+                    "document_id": "tax",
+                    "tax_period": "2026-09-01T00:00:00",
+                    "tax": "Единый налоговый платеж",
+                    "amount": "40.00",
+                }
+            ],
+        }
+
+        linked = linked_payroll_items(snapshot)
+
+        self.assertEqual(len(linked["direct"]), 1)
+        self.assertEqual(linked["direct"][0]["amount"], "20.00")
+        self.assertEqual(
+            {item["employee"] for item in linked["collective"]},
+            {
+                "Дорогин Артем Владимирович",
+                "Костенко Татьяна Гергартовна",
+            },
+        )
+        self.assertEqual(
+            sum(Decimal(item["amount"]) for item in linked["collective"]),
+            Decimal("80.00"),
+        )
+        self.assertEqual(
+            sum(Decimal(item["amount"]) for item in linked["tax"]),
+            Decimal("40.00"),
+        )
 
     def test_old_snapshot_does_not_mark_expenses_as_stale(self):
         self.assertNotIn(Expense, synced_models_for_snapshot({}))

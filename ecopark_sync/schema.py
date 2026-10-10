@@ -21,14 +21,10 @@ from .utils import now_utc_naive
 
 def init_schema():
     engine = get_engine()
-    rules_table_is_new = not inspect(engine).has_table(
-        ExpenseAllocationRule.__tablename__
-    )
     Base.metadata.create_all(engine)
     apply_lightweight_upgrades(engine)
     seed_expense_budget_categories(engine)
-    if rules_table_is_new:
-        seed_expense_allocation_rules(engine)
+    seed_expense_allocation_rules(engine)
     refresh_existing_auto_allocations(engine)
 
 
@@ -40,16 +36,12 @@ def ensure_whatsapp_schema():
 def ensure_expense_schema():
     """Create and upgrade expense allocation storage, then classify auto-mode rows."""
     engine = get_engine()
-    rules_table_is_new = not inspect(engine).has_table(
-        ExpenseAllocationRule.__tablename__
-    )
     ExpenseBudgetCategory.__table__.create(engine, checkfirst=True)
     ExpenseAllocationRule.__table__.create(engine, checkfirst=True)
     ExpenseAllocation.__table__.create(engine, checkfirst=True)
     apply_lightweight_upgrades(engine)
     seed_expense_budget_categories(engine)
-    if rules_table_is_new:
-        seed_expense_allocation_rules(engine)
+    seed_expense_allocation_rules(engine)
     refresh_existing_auto_allocations(engine)
 
 

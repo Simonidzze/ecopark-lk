@@ -48,7 +48,7 @@
 
     <section class="section">
       <div class="section-head">
-        <h2>Позиции чека</h2>
+        <h2>Детализация расхода из 1С</h2>
         <span class="muted">{{ expense.receipt_items_count }}</span>
       </div>
       {% if expense.receipt_items %}
@@ -76,8 +76,8 @@
         </div>
       {% else %}
         <div class="form-body muted">
-          1С пока не передаёт состав чека. После добавления массива <code>receipt_items</code>
-          позиции появятся здесь и будут участвовать в автоматическом разнесении.
+          Для этого расхода в 1С нет строк чека, зарплатной ведомости или налоговой
+          расшифровки. Автораспределение использует статью, контрагента и назначение платежа.
         </div>
       {% endif %}
     </section>

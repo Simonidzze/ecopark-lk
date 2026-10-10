@@ -76,6 +76,34 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
         )
         self.assertIn("Ильиных", allocations["security"]["details"].title())
 
+    def test_custom_rule_classifies_payroll_detail_item(self):
+        allocations, reason = build_auto_allocations(
+            self.expense(
+                purpose="Заработная плата по реестру",
+                receipt_items_json=serialize_receipt_items(
+                    [
+                        {
+                            "name": "Зарплата: Костенко Татьяна Гергартовна",
+                            "amount": "1000.00",
+                            "kind": "payroll",
+                        }
+                    ]
+                ),
+            ),
+            purpose_rules=[
+                {
+                    "category_id": "accountant",
+                    "purpose_contains": "Костенко Татьяна Гергартовна",
+                }
+            ],
+        )
+
+        self.assertEqual(reason, "receipt")
+        self.assertEqual(
+            allocations["accountant"]["amount"],
+            Decimal("1000.00"),
+        )
+
     def test_splits_recognized_receipt_items_and_leaves_unknown_remainder(self):
         receipt_items_json = serialize_receipt_items(
             [
