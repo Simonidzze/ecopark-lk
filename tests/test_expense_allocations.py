@@ -110,7 +110,7 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
             self.expense(
                 expense_category="Выдача подотчетных сумм",
                 counterparty="Дорогин Артем Владимирович",
-                purpose="Списание подотчетных средств на Дорогина Артема Владимировича",
+                purpose="Списание подотчетных средств: Дорогин Артем Владимирович",
             ),
             purpose_rules=[
                 {
@@ -127,7 +127,7 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
         allocations, reason = build_auto_allocations(
             self.expense(
                 expense_category="Списание подотчетных сумм",
-                purpose="Авансовый отчет Дорогина Артема Владимировича",
+                purpose="Авансовый отчет: Дорогин Артем Владимирович",
                 receipt_items_json=serialize_receipt_items(
                     [
                         {
