@@ -26,10 +26,22 @@ def parse_date_filter(value):
 def expense_filter_values(args):
     date_from, date_from_value = parse_date_filter(args.get("date_from"))
     date_to, date_to_value = parse_date_filter(args.get("date_to"))
+    category = str(args.get("category") or "").strip()
+    allocation_status = str(args.get("allocation_status") or "").strip()
+    if category == "unallocated":
+        category = ""
+        allocation_status = "unallocated"
+    if allocation_status not in {"unallocated", "allocated"}:
+        allocation_status = ""
     return {
         "q": str(args.get("q") or "").strip(),
-        "category": str(args.get("category") or "").strip(),
+        "category": category,
         "category_label": "",
+        "allocation_status": allocation_status,
+        "allocation_status_label": {
+            "unallocated": "Есть нераспределённый остаток",
+            "allocated": "Распределено полностью",
+        }.get(allocation_status, ""),
         "date_from": date_from,
         "date_to": date_to,
         "date_from_value": date_from_value,
@@ -50,6 +62,7 @@ def build_expense_statement(filters):
     statement = select(Expense)
     search = filters.get("q", "")
     category = filters.get("category", "")
+    allocation_status = filters.get("allocation_status", "")
     date_from = filters.get("date_from_value")
     date_to = filters.get("date_to_value")
 
@@ -74,9 +87,7 @@ def build_expense_statement(filters):
                 Expense.id.in_(budget_category_expenses),
             )
         )
-    if category == "unallocated":
-        statement = statement.where(Expense.amount > allocated_amount_subquery())
-    elif category:
+    if category:
         statement = statement.where(
             or_(
                 Expense.expense_category == category,
@@ -87,6 +98,10 @@ def build_expense_statement(filters):
                 ),
             )
         )
+    if allocation_status == "unallocated":
+        statement = statement.where(Expense.amount > allocated_amount_subquery())
+    elif allocation_status == "allocated":
+        statement = statement.where(Expense.amount <= allocated_amount_subquery())
     if date_from:
         statement = statement.where(Expense.date >= datetime.combine(date_from, time.min))
     if date_to:
@@ -169,17 +184,14 @@ def load_expense_report(filters):
                 ExpenseBudgetCategory.name,
             )
         ).all()
-        if filters.get("category") == "unallocated":
-            filters["category_label"] = "Не распределено"
-        else:
-            filters["category_label"] = next(
-                (
-                    category.name
-                    for category in categories
-                    if category.id == filters.get("category")
-                ),
-                filters.get("category", ""),
-            )
+        filters["category_label"] = next(
+            (
+                category.name
+                for category in categories
+                if category.id == filters.get("category")
+            ),
+            filters.get("category", ""),
+        )
 
         rows = session.scalars(
             build_expense_statement(filters).order_by(
@@ -388,6 +400,14 @@ def render_expenses_xlsx(rows, stats, filters, as_of):
     if filters.get("category"):
         filter_parts.append(
             f"статья: {filters.get('category_label') or filters['category']}"
+        )
+    if filters.get("allocation_status"):
+        filter_parts.append(
+            "статус: "
+            + (
+                filters.get("allocation_status_label")
+                or filters["allocation_status"]
+            )
         )
     if filters.get("q"):
         filter_parts.append(f"поиск: {filters['q']}")

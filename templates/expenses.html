@@ -8,17 +8,22 @@
     <input class="input" type="date" name="date_to" value="{{ filters.date_to }}" aria-label="Дата по">
     <select class="input" name="category" aria-label="Статья сметы">
       <option value="">Все статьи сметы</option>
-      <option value="unallocated" {% if filters.category == "unallocated" %}selected{% endif %}>Не распределено</option>
       {% for category in categories %}
         <option value="{{ category.id }}" {% if filters.category == category.id %}selected{% endif %}>{{ category.name }}</option>
       {% endfor %}
     </select>
+    <select class="input" name="allocation_status" aria-label="Статус распределения">
+      <option value="">Любой статус распределения</option>
+      <option value="unallocated" {% if filters.allocation_status == "unallocated" %}selected{% endif %}>Есть нераспределённый остаток</option>
+      <option value="allocated" {% if filters.allocation_status == "allocated" %}selected{% endif %}>Распределено полностью</option>
+    </select>
     <input class="input" type="search" name="q" value="{{ filters.q }}" placeholder="Документ, статья, контрагент, назначение">
     <button class="button" type="submit">Показать</button>
     <a class="button secondary" href="{{ url_for('monthly_expenses') }}">По месяцам</a>
+    <a class="button secondary" href="{{ url_for('expense_rules') }}">Правила автораспределения</a>
     <a
       class="button secondary"
-      href="{{ url_for('expense_report_xlsx', date_from=filters.date_from, date_to=filters.date_to, category=filters.category, q=filters.q) }}"
+      href="{{ url_for('expense_report_xlsx', date_from=filters.date_from, date_to=filters.date_to, category=filters.category, allocation_status=filters.allocation_status, q=filters.q) }}"
     >Скачать Excel</a>
   </form>
 {% endblock %}
@@ -144,7 +149,7 @@
           {% else %}
             <tr>
               <td colspan="6" class="muted">
-                {% if filters.q or filters.category or filters.date_from or filters.date_to %}
+                {% if filters.q or filters.category or filters.allocation_status or filters.date_from or filters.date_to %}
                   По выбранным фильтрам расходов нет
                 {% else %}
                   Расходов пока нет. После добавления массива expenses в снимок 1С они появятся здесь автоматически.

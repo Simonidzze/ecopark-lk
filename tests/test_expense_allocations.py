@@ -53,6 +53,29 @@ class ExpenseAutoAllocationTest(unittest.TestCase):
             Decimal("1000.00"),
         )
 
+    def test_custom_purpose_rule_assigns_full_expense(self):
+        allocations, reason = build_auto_allocations(
+            self.expense(
+                purpose="Заработная плата за Ильиных Петра Сергеевича",
+                receipt_items_json=serialize_receipt_items(
+                    [{"name": "Неизвестная позиция", "amount": "200.00"}]
+                ),
+            ),
+            purpose_rules=[
+                {
+                    "category_id": "security",
+                    "purpose_contains": "ильиных петра сергеевича",
+                }
+            ],
+        )
+
+        self.assertEqual(reason, "purpose-rule")
+        self.assertEqual(
+            allocations["security"]["amount"],
+            Decimal("1000.00"),
+        )
+        self.assertIn("Ильиных", allocations["security"]["details"].title())
+
     def test_splits_recognized_receipt_items_and_leaves_unknown_remainder(self):
         receipt_items_json = serialize_receipt_items(
             [

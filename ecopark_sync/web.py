@@ -29,6 +29,7 @@ from .config import env, require_dependency
 from .db import make_session_factory
 from .expense_allocations import (
     money,
+    normalize_text,
     refresh_auto_expense_allocations,
     replace_manual_allocations,
 )
@@ -39,7 +40,24 @@ from .expense_report import (
     load_monthly_expense_report,
     render_expenses_xlsx,
 )
-from .models import Accrual, Balance, CallAttempt, CallCampaign, Expense, ExpenseBudgetCategory, Income, MessengerBinding, Owner, OwnerPlot, Payment, Plot, PretrialClaim, SyncRun, WhatsAppMessage
+from .models import (
+    Accrual,
+    Balance,
+    CallAttempt,
+    CallCampaign,
+    Expense,
+    ExpenseAllocationRule,
+    ExpenseBudgetCategory,
+    Income,
+    MessengerBinding,
+    Owner,
+    OwnerPlot,
+    Payment,
+    Plot,
+    PretrialClaim,
+    SyncRun,
+    WhatsAppMessage,
+)
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
 from .whatsapp import (
@@ -695,6 +713,34 @@ def enqueue_whatsapp_claim(session, owner_plot_id, fields, phone, message_templa
     return queued
 
 
+def refresh_all_auto_expenses(session):
+    expenses = session.scalars(
+        select(Expense).where(Expense.allocation_mode == "auto")
+    ).all()
+    return refresh_auto_expense_allocations(session, expenses)
+
+
+def normalized_rule_fragment(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def validate_expense_rule(session, category_id, purpose_contains, exclude_id=None):
+    category = session.get(ExpenseBudgetCategory, category_id)
+    if category is None or not category.active:
+        abort(400, description="Выберите действующую статью сметы")
+    if not purpose_contains:
+        abort(400, description="Укажите фрагмент назначения платежа")
+    if len(purpose_contains) > 255:
+        abort(400, description="Фрагмент назначения не должен превышать 255 символов")
+
+    normalized_fragment = normalize_text(purpose_contains)
+    rules = session.scalars(select(ExpenseAllocationRule)).all()
+    for rule in rules:
+        if rule.id != exclude_id and normalize_text(rule.purpose_contains) == normalized_fragment:
+            abort(400, description="Такой фрагмент назначения уже есть в справочнике")
+    return category
+
+
 def create_app():
     require_dependency(Flask, "Flask")
     template_folder = Path(__file__).resolve().parent.parent / "templates"
@@ -867,6 +913,122 @@ def create_app():
             as_of=as_of,
             db_error=db_error,
         )
+
+    @app.get("/admin/expense-rules")
+    def expense_rules():
+        Session = make_session_factory()
+        with Session() as session:
+            categories = session.scalars(
+                select(ExpenseBudgetCategory)
+                .where(ExpenseBudgetCategory.active.is_(True))
+                .order_by(
+                    ExpenseBudgetCategory.sort_order,
+                    ExpenseBudgetCategory.name,
+                )
+            ).all()
+            rows = session.execute(
+                select(ExpenseAllocationRule, ExpenseBudgetCategory.name)
+                .outerjoin(
+                    ExpenseBudgetCategory,
+                    ExpenseBudgetCategory.id == ExpenseAllocationRule.category_id,
+                )
+                .order_by(
+                    ExpenseAllocationRule.active.desc(),
+                    ExpenseAllocationRule.purpose_contains,
+                    ExpenseAllocationRule.id,
+                )
+            ).all()
+            rules = [
+                {
+                    "id": rule.id,
+                    "category_id": rule.category_id,
+                    "category_name": category_name or rule.category_id,
+                    "purpose_contains": rule.purpose_contains,
+                    "active": rule.active,
+                }
+                for rule, category_name in rows
+            ]
+        return render_template(
+            "expense_rules.html",
+            rules=rules,
+            categories=categories,
+        )
+
+    @app.post("/admin/expense-rules")
+    def create_expense_rule():
+        category_id = str(request.form.get("category_id") or "").strip()
+        purpose_contains = normalized_rule_fragment(
+            request.form.get("purpose_contains")
+        )
+        Session = make_session_factory()
+        with Session() as session:
+            validate_expense_rule(session, category_id, purpose_contains)
+            timestamp = now_utc_naive()
+            session.add(
+                ExpenseAllocationRule(
+                    category_id=category_id,
+                    purpose_contains=purpose_contains,
+                    active=True,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+            session.flush()
+            refreshed = refresh_all_auto_expenses(session)
+            session.commit()
+        flash(
+            f"Правило добавлено. Автоматически пересчитано расходов: {refreshed}",
+            "success",
+        )
+        return redirect(url_for("expense_rules"))
+
+    @app.post("/admin/expense-rules/<int:rule_id>")
+    def update_expense_rule(rule_id):
+        category_id = str(request.form.get("category_id") or "").strip()
+        purpose_contains = normalized_rule_fragment(
+            request.form.get("purpose_contains")
+        )
+        active = request.form.get("active") == "1"
+        Session = make_session_factory()
+        with Session() as session:
+            rule = session.get(ExpenseAllocationRule, rule_id)
+            if rule is None:
+                abort(404)
+            validate_expense_rule(
+                session,
+                category_id,
+                purpose_contains,
+                exclude_id=rule.id,
+            )
+            rule.category_id = category_id
+            rule.purpose_contains = purpose_contains
+            rule.active = active
+            rule.updated_at = now_utc_naive()
+            session.flush()
+            refreshed = refresh_all_auto_expenses(session)
+            session.commit()
+        flash(
+            f"Правило сохранено. Автоматически пересчитано расходов: {refreshed}",
+            "success",
+        )
+        return redirect(url_for("expense_rules"))
+
+    @app.post("/admin/expense-rules/<int:rule_id>/delete")
+    def delete_expense_rule(rule_id):
+        Session = make_session_factory()
+        with Session() as session:
+            rule = session.get(ExpenseAllocationRule, rule_id)
+            if rule is None:
+                abort(404)
+            session.delete(rule)
+            session.flush()
+            refreshed = refresh_all_auto_expenses(session)
+            session.commit()
+        flash(
+            f"Правило удалено. Автоматически пересчитано расходов: {refreshed}",
+            "success",
+        )
+        return redirect(url_for("expense_rules"))
 
     @app.get("/admin/expenses/<expense_id>")
     def expense_detail(expense_id):

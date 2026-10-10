@@ -3,21 +3,32 @@ from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.orm import Session
 
 from .db import get_engine
-from .expense_allocations import BUDGET_CATEGORIES, refresh_auto_expense_allocations
+from .expense_allocations import (
+    BUDGET_CATEGORIES,
+    DEFAULT_PURPOSE_RULES,
+    refresh_auto_expense_allocations,
+)
 from .models import (
     Base,
     Expense,
     ExpenseAllocation,
+    ExpenseAllocationRule,
     ExpenseBudgetCategory,
     WhatsAppMessage,
 )
+from .utils import now_utc_naive
 
 
 def init_schema():
     engine = get_engine()
+    rules_table_is_new = not inspect(engine).has_table(
+        ExpenseAllocationRule.__tablename__
+    )
     Base.metadata.create_all(engine)
     apply_lightweight_upgrades(engine)
     seed_expense_budget_categories(engine)
+    if rules_table_is_new:
+        seed_expense_allocation_rules(engine)
     refresh_existing_auto_allocations(engine)
 
 
@@ -29,10 +40,16 @@ def ensure_whatsapp_schema():
 def ensure_expense_schema():
     """Create and upgrade expense allocation storage, then classify auto-mode rows."""
     engine = get_engine()
+    rules_table_is_new = not inspect(engine).has_table(
+        ExpenseAllocationRule.__tablename__
+    )
     ExpenseBudgetCategory.__table__.create(engine, checkfirst=True)
+    ExpenseAllocationRule.__table__.create(engine, checkfirst=True)
     ExpenseAllocation.__table__.create(engine, checkfirst=True)
     apply_lightweight_upgrades(engine)
     seed_expense_budget_categories(engine)
+    if rules_table_is_new:
+        seed_expense_allocation_rules(engine)
     refresh_existing_auto_allocations(engine)
 
 
@@ -55,6 +72,30 @@ def seed_expense_budget_categories(engine):
                 active=statement.inserted.active,
             )
         )
+
+
+def seed_expense_allocation_rules(engine):
+    timestamp = now_utc_naive()
+    with Session(engine, future=True) as session:
+        existing_fragments = {
+            str(value).strip().lower()
+            for value in session.scalars(
+                select(ExpenseAllocationRule.purpose_contains)
+            ).all()
+        }
+        for category_id, purpose_contains in DEFAULT_PURPOSE_RULES:
+            if purpose_contains.strip().lower() in existing_fragments:
+                continue
+            session.add(
+                ExpenseAllocationRule(
+                    category_id=category_id,
+                    purpose_contains=purpose_contains,
+                    active=True,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+        session.commit()
 
 
 def refresh_existing_auto_allocations(engine):

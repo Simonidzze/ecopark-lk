@@ -5,7 +5,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import delete, select
 
-from .models import Expense, ExpenseAllocation
+from .models import Expense, ExpenseAllocation, ExpenseAllocationRule
 from .utils import now_utc_naive, parse_decimal
 
 
@@ -29,6 +29,10 @@ BUDGET_CATEGORIES = (
     ("chairman", "Председатель"),
     ("accountant", "Бухгалтер"),
     ("plumber", "Сантехник"),
+)
+
+DEFAULT_PURPOSE_RULES = (
+    ("security", "Ильиных Петра Сергеевича"),
 )
 
 CATEGORY_NAMES = dict(BUDGET_CATEGORIES)
@@ -172,7 +176,36 @@ def money(value):
 
 
 def normalize_text(value):
-    return str(value or "").lower().replace("ё", "е").strip()
+    return re.sub(r"\s+", " ", str(value or "").lower().replace("ё", "е")).strip()
+
+
+def load_active_purpose_rules(session):
+    rows = session.scalars(
+        select(ExpenseAllocationRule).where(ExpenseAllocationRule.active.is_(True))
+    ).all()
+    return sorted(
+        rows,
+        key=lambda rule: (-len(normalize_text(rule.purpose_contains)), rule.id or 0),
+    )
+
+
+def match_purpose_rule(purpose, purpose_rules):
+    normalized_purpose = normalize_text(purpose)
+    if not normalized_purpose:
+        return None, ""
+    for rule in purpose_rules or ():
+        if isinstance(rule, dict):
+            category_id = rule.get("category_id")
+            fragment = rule.get("purpose_contains")
+        elif isinstance(rule, (tuple, list)):
+            category_id, fragment = rule[:2]
+        else:
+            category_id = getattr(rule, "category_id", None)
+            fragment = getattr(rule, "purpose_contains", "")
+        normalized_fragment = normalize_text(fragment)
+        if category_id and normalized_fragment and normalized_fragment in normalized_purpose:
+            return category_id, str(fragment).strip()
+    return None, ""
 
 
 def choose_budget_category(*values):
@@ -241,10 +274,22 @@ def receipt_item_amount(item):
     return Decimal("0.00")
 
 
-def build_auto_allocations(expense):
+def build_auto_allocations(expense, purpose_rules=()):
     expense_amount = max(money(getattr(expense, "amount", 0)), Decimal("0.00"))
     if expense_amount <= 0:
         return {}, ""
+
+    category_id, matched_fragment = match_purpose_rule(
+        getattr(expense, "purpose", ""),
+        purpose_rules,
+    )
+    if category_id:
+        return {
+            category_id: {
+                "amount": expense_amount,
+                "details": f"Правило назначения: «{matched_fragment}»",
+            }
+        }, "purpose-rule"
 
     item_allocations = defaultdict(Decimal)
     item_names = defaultdict(list)
@@ -298,17 +343,32 @@ def build_auto_allocations(expense):
     }, "operation"
 
 
-def refresh_auto_expense_allocations(session, expenses, force=False):
+def refresh_auto_expense_allocations(
+    session,
+    expenses,
+    force=False,
+    purpose_rules=None,
+):
+    expenses = [
+        expense
+        for expense in expenses
+        if force or getattr(expense, "allocation_mode", "auto") != "manual"
+    ]
+    if not expenses:
+        return 0
+    if purpose_rules is None:
+        purpose_rules = load_active_purpose_rules(session)
+
     refreshed = 0
     for expense in expenses:
-        if getattr(expense, "allocation_mode", "auto") == "manual" and not force:
-            continue
-
         expense.allocation_mode = "auto"
         session.execute(
             delete(ExpenseAllocation).where(ExpenseAllocation.expense_id == expense.id)
         )
-        allocations, _reason = build_auto_allocations(expense)
+        allocations, _reason = build_auto_allocations(
+            expense,
+            purpose_rules=purpose_rules,
+        )
         timestamp = now_utc_naive()
         for category_id, allocation in allocations.items():
             session.add(

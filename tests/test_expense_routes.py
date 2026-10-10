@@ -11,6 +11,7 @@ from ecopark_sync.models import (
     Base,
     Expense,
     ExpenseAllocation,
+    ExpenseAllocationRule,
     ExpenseBudgetCategory,
 )
 from ecopark_sync.web import create_app
@@ -44,6 +45,12 @@ class ExpenseAllocationRoutesTest(unittest.TestCase):
                         id="electricity",
                         name="Электроэнергия",
                         sort_order=2,
+                        active=True,
+                    ),
+                    ExpenseBudgetCategory(
+                        id="security",
+                        name="Охрана",
+                        sort_order=3,
                         active=True,
                     ),
                     Expense(
@@ -109,6 +116,35 @@ class ExpenseAllocationRoutesTest(unittest.TestCase):
             sum((allocation.amount for allocation in allocations), Decimal("0")),
             Decimal("900.00"),
         )
+
+    def test_creates_purpose_rule_and_recalculates_auto_expenses(self):
+        with self.Session() as session:
+            expense = session.get(Expense, "expense-1")
+            expense.purpose = "Заработная плата за Ильиных Петра Сергеевича"
+            session.commit()
+
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session):
+            response = create_app().test_client().post(
+                "/admin/expense-rules",
+                data={
+                    "category_id": "security",
+                    "purpose_contains": "Ильиных Петра Сергеевича",
+                },
+                follow_redirects=True,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        page = response.get_data(as_text=True)
+        self.assertIn("Правило добавлено", page)
+        self.assertIn("Ильиных Петра Сергеевича", page)
+
+        with self.Session() as session:
+            rule = session.scalar(select(ExpenseAllocationRule))
+            allocation = session.scalar(select(ExpenseAllocation))
+
+        self.assertEqual(rule.category_id, "security")
+        self.assertEqual(allocation.category_id, "security")
+        self.assertEqual(allocation.amount, Decimal("1000.00"))
 
     def test_rejects_allocation_above_expense_total(self):
         with patch("ecopark_sync.web.make_session_factory", return_value=self.Session):

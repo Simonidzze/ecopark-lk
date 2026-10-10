@@ -155,12 +155,14 @@ class ExpenseReportTest(unittest.TestCase):
                 "date_from": "2026-09-01",
                 "date_to": "2026-09-30",
                 "category": "Обслуживание территории",
+                "allocation_status": "unallocated",
                 "q": "трава",
             }
         )
 
     def test_parses_filters_and_renders_typed_xlsx(self):
         self.assertEqual(self.filters["date_from_value"].isoformat(), "2026-09-01")
+        self.assertEqual(self.filters["allocation_status"], "unallocated")
         report = render_expenses_xlsx(self.rows, self.stats, self.filters, self.as_of)
         workbook = load_workbook(report, data_only=False)
         sheet = workbook["Расходы"]
@@ -174,6 +176,13 @@ class ExpenseReportTest(unittest.TestCase):
         self.assertEqual(sheet["I8"].value, 25000.5)
         self.assertIn("ExpensesTable", sheet.tables)
         self.assertEqual(sheet.freeze_panes, "F8")
+
+
+    def test_keeps_legacy_unallocated_category_link_working(self):
+        filters = expense_filter_values({"category": "unallocated"})
+
+        self.assertEqual(filters["category"], "")
+        self.assertEqual(filters["allocation_status"], "unallocated")
 
 
 class ExpenseRoutesTest(unittest.TestCase):
@@ -199,8 +208,8 @@ class ExpenseRoutesTest(unittest.TestCase):
             ),
         ) as loader:
             client = create_app().test_client()
-            page = client.get("/admin/expenses?category=electricity")
-            response = client.get("/admin/expenses/report.xlsx?category=electricity")
+            page = client.get("/admin/expenses?category=electricity&allocation_status=unallocated")
+            response = client.get("/admin/expenses/report.xlsx?category=electricity&allocation_status=unallocated")
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("Скачать Excel", page.get_data(as_text=True))
@@ -210,6 +219,10 @@ class ExpenseRoutesTest(unittest.TestCase):
         self.assertGreater(len(response.data), 1000)
         self.assertEqual(loader.call_count, 2)
         self.assertEqual(loader.call_args.args[0]["category"], "electricity")
+        self.assertEqual(
+            loader.call_args.args[0]["allocation_status"],
+            "unallocated",
+        )
 
 
 if __name__ == "__main__":

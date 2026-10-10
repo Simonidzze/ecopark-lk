@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -273,6 +273,25 @@ class ExpenseBudgetCategory(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class ExpenseAllocationRule(Base):
+    __tablename__ = "expense_allocation_rules"
+    __table_args__ = (
+        Index("idx_expense_allocation_rules_category_id", "category_id"),
+        Index("idx_expense_allocation_rules_active", "active"),
+        UniqueConstraint(
+            "purpose_contains",
+            name="uq_expense_allocation_rules_purpose_contains",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    purpose_contains: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class ExpenseAllocation(Base):

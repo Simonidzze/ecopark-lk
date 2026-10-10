@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Правила расходов - Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <a class="button secondary" href="{{ url_for('expenses') }}">К расходам</a>
+{% endblock %}
+
+{% block content %}
+  <section class="section" style="margin-bottom: 20px;">
+    <div class="section-head">
+      <h2>Новое правило</h2>
+      <span class="muted">Совпадение без учёта регистра</span>
+    </div>
+    <form class="form-body" method="post" action="{{ url_for('create_expense_rule') }}">
+      <div class="toolbar">
+        <select class="input" name="category_id" required aria-label="Статья сметы">
+          <option value="">Выберите статью сметы</option>
+          {% for category in categories %}
+            <option value="{{ category.id }}">{{ category.name }}</option>
+          {% endfor %}
+        </select>
+        <input
+          class="input"
+          type="text"
+          name="purpose_contains"
+          maxlength="255"
+          required
+          placeholder="Фрагмент назначения платежа"
+          aria-label="Фрагмент назначения платежа"
+        >
+        <button class="button" type="submit">Добавить правило</button>
+      </div>
+      <p class="muted" style="margin-bottom: 0;">
+        Если назначение платежа содержит указанный фрагмент, вся сумма расхода
+        автоматически относится к выбранной статье. При нескольких совпадениях
+        используется наиболее длинный фрагмент.
+      </p>
+    </form>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>Справочник автораспределения</h2>
+      <span class="muted">Правил: {{ rules|length }}</span>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Статья сметы</th>
+            <th>Фрагмент назначения платежа</th>
+            <th>Включено</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for rule in rules %}
+            <tr>
+              <td>
+                <form id="rule-{{ rule.id }}" method="post" action="{{ url_for('update_expense_rule', rule_id=rule.id) }}"></form>
+                <select class="input" name="category_id" form="rule-{{ rule.id }}" required>
+                  {% for category in categories %}
+                    <option value="{{ category.id }}" {% if category.id == rule.category_id %}selected{% endif %}>{{ category.name }}</option>
+                  {% endfor %}
+                </select>
+              </td>
+              <td>
+                <input
+                  class="input"
+                  type="text"
+                  name="purpose_contains"
+                  form="rule-{{ rule.id }}"
+                  maxlength="255"
+                  required
+                  value="{{ rule.purpose_contains }}"
+                >
+              </td>
+              <td>
+                <label>
+                  <input type="checkbox" name="active" value="1" form="rule-{{ rule.id }}" {% if rule.active %}checked{% endif %}>
+                  Да
+                </label>
+              </td>
+              <td>
+                <div class="toolbar">
+                  <button class="button secondary" type="submit" form="rule-{{ rule.id }}">Сохранить</button>
+                  <form method="post" action="{{ url_for('delete_expense_rule', rule_id=rule.id) }}" onsubmit="return confirm('Удалить правило?');">
+                    <button class="button danger" type="submit">Удалить</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="4" class="muted">Правил пока нет</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

@@ -343,7 +343,7 @@
           <a href="{{ url_for('monthly_debts') }}" class="{% if request.endpoint == 'monthly_debts' %}active{% endif %}">По месяцам</a>
           <a href="{{ url_for('debtors') }}" class="{% if request.endpoint == 'debtors' %}active{% endif %}">Должники</a>
           <a href="{{ url_for('incomes') }}" class="{% if request.endpoint == 'incomes' %}active{% endif %}">Прочие доходы</a>
-          <a href="{{ url_for('expenses') }}" class="{% if request.endpoint in ['expenses', 'expense_detail', 'save_expense_allocations', 'auto_expense_allocations', 'expense_report_xlsx'] %}active{% endif %}">Расходы</a>
+          <a href="{{ url_for('expenses') }}" class="{% if request.endpoint in ['expenses', 'expense_detail', 'save_expense_allocations', 'auto_expense_allocations', 'expense_report_xlsx', 'expense_rules', 'create_expense_rule', 'update_expense_rule', 'delete_expense_rule'] %}active{% endif %}">Расходы</a>
           <a href="{{ url_for('monthly_expenses') }}" class="{% if request.endpoint == 'monthly_expenses' %}active{% endif %}">Расходы по месяцам</a>
           <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>
           <a href="{{ url_for('whatsapp_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('whatsapp') %}active{% endif %}">WhatsApp</a>
