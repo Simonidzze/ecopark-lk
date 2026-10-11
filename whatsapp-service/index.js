@@ -371,6 +371,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && req.url === "/send-text") {
+    if (state !== "ready" || !client) {
+      response(res, 409, { error: "WhatsApp is not ready" });
+      return;
+    }
+    let sendStage = "запрос";
+    try {
+      const body = await readJson(req);
+      const phone = String(body.phone || "").replace(/\D/g, "");
+      const text = String(body.message || "").trim().slice(0, 1000);
+      if (!/^\d{10,15}$/.test(phone) || !text) {
+        response(res, 400, { error: "phone and message are required" });
+        return;
+      }
+
+      sendStage = "поиск номера";
+      const contact = await client.getNumberId(phone);
+      if (!contact) {
+        response(res, 404, { error: "Номер не зарегистрирован в WhatsApp" });
+        return;
+      }
+
+      sendStage = "отправка сообщения";
+      const contactId = serializeWhatsAppId(contact, phone);
+      const message = await client.sendMessage(contactId, text, { waitUntilMsgSent: true });
+      if (!message) {
+        throw new Error("WhatsApp не вернул подтверждение отправки");
+      }
+      const messageId = serializeWhatsAppId(message.id);
+      if (!messageId) {
+        throw new Error("WhatsApp вернул сообщение без идентификатора");
+      }
+      response(res, 200, { ok: true, message_id: messageId });
+    } catch (error) {
+      const detail = String(error?.message || error);
+      console.error("WhatsApp text send failed at " + sendStage + ": " + detail);
+      response(res, 500, { error: sendStage + ": " + detail });
+    }
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/send") {
     if (state !== "ready" || !client) {
       response(res, 409, { error: "WhatsApp is not ready" });

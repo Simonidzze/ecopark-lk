@@ -20,10 +20,15 @@ from ecopark_sync.whatsapp import (
 class FakeWhatsAppClient:
     def __init__(self):
         self.sent = []
+        self.sent_text = []
 
     def send_pdf(self, phone, message, filename, document):
         self.sent.append((phone, message, filename, document.read()))
         return {"message_id": "false_79990000000@test"}
+
+    def send_text(self, phone, message):
+        self.sent_text.append((phone, message))
+        return {"message_id": "false_79990000000"}
 
 
 class WhatsAppTest(unittest.TestCase):
@@ -94,6 +99,26 @@ class WhatsAppTest(unittest.TestCase):
             ),
             "Иванов: участок 42А, № 7",
         )
+        self.assertEqual(
+            format_whatsapp_message(
+                "Долг: {debt}",
+                owner="Иванов",
+                plot_number="42А",
+                claim_number="",
+                debt="12 345 руб. 67 коп.",
+            ),
+            "Долг: 12 345 руб. 67 коп.",
+        )
+        self.assertEqual(
+            format_whatsapp_message(
+                "Долг: {сумма}",
+                owner="Иванов",
+                plot_number="42А",
+                claim_number="",
+                debt="12 345 руб. 67 коп.",
+            ),
+            "Долг: 12 345 руб. 67 коп.",
+        )
         with self.assertRaises(ValueError):
             format_whatsapp_message("{unknown}", owner="", plot_number="", claim_number=1)
 
@@ -134,6 +159,62 @@ class WhatsAppTest(unittest.TestCase):
             sent = session.scalar(select(WhatsAppMessage))
             self.assertEqual(sent.status, "sent")
             self.assertEqual(sent.external_message_id, "false_79990000000@test")
+
+    def test_debt_message_route_queues_one_text_per_owner_and_worker_sends_it(self):
+        report = ([{
+            "owner": "Иванов Иван Иванович",
+            "plots": [
+                {"plot_number": "42А", "account": "000042", "owner_plot_id": "owner-plot-1"},
+                {"plot_number": "43", "account": "000043", "owner_plot_id": "owner-plot-2"},
+            ],
+            "phones": ["8 (999) 000-00-00"],
+            "total_debt": Decimal("12345.67"),
+            "monthly_accrual": Decimal("1000"),
+            "debt_months": Decimal("12.3"),
+            "last_payment_date": None,
+            "last_payment_amount": Decimal("0"),
+        }], {"count": 1, "total_debt": Decimal("12345.67")}, ["8 (999) 000-00-00"])
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session), patch(
+            "ecopark_sync.web.load_debtors_report", return_value=report
+        ) as load_report:
+            response = create_app().test_client().post(
+                "/admin/debtors/whatsapp-message",
+                data={
+                    "months_from": "3",
+                    "months_to": "12",
+                    "confirm": "yes",
+                    "whatsapp_debt_message": "{owner} | {plot_number} | {debt}",
+                },
+            )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/whatsapp", response.headers["Location"])
+        load_report.assert_called_once_with(Decimal("3"), Decimal("12"))
+        with self.Session() as session:
+            queued = session.scalar(select(WhatsAppMessage))
+            claim = session.scalar(select(PretrialClaim))
+            self.assertIsNone(claim)
+            self.assertEqual(queued.claim_number, 0)
+            self.assertEqual(queued.filename, "")
+            self.assertEqual(queued.plot_number, "42А, 43")
+            self.assertEqual(
+                queued.message_text,
+                "Иванов Иван Иванович | 42А, 43 | 12 345 руб. 67 коп.",
+            )
+            self.assertTrue(queued.batch_id.startswith("message-"))
+
+        fake_client = FakeWhatsAppClient()
+        with patch("ecopark_sync.whatsapp.render_pretrial_claim_pdf") as render_pdf:
+            result = process_next_whatsapp_message(
+                client=fake_client, session_factory=self.Session
+            )
+
+        self.assertEqual(result, "sent")
+        render_pdf.assert_not_called()
+        self.assertEqual(
+            fake_client.sent_text,
+            [("79990000000", "Иванов Иван Иванович | 42А, 43 | 12 345 руб. 67 коп.")],
+        )
 
     def test_bulk_route_uses_current_filter_rows(self):
         report = ([{

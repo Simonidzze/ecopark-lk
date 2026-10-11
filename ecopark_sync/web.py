@@ -21,6 +21,7 @@ from .claims import (
     PDF_CONTENT_TYPE,
     claim_values,
     extract_cadastral_number,
+    format_ru_money,
     parse_iso_date,
     render_pretrial_claim_pdf,
     safe_claim_filename,
@@ -62,6 +63,7 @@ from .models import (
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
 from .whatsapp import (
+    DEFAULT_DEBT_REMINDER_TEMPLATE,
     DEFAULT_MESSAGE_TEMPLATE,
     WhatsAppClient,
     WhatsAppServiceError,
@@ -694,6 +696,7 @@ def enqueue_whatsapp_claim(session, owner_plot_id, fields, phone, message_templa
         owner=details["owner"],
         plot_number=details["plot_number"],
         claim_number=package["claim"].number,
+        debt=package["values"]["TOTAL_AMOUNT"],
     )
     queued = WhatsAppMessage(
         batch_id=batch_id,
@@ -705,6 +708,44 @@ def enqueue_whatsapp_claim(session, owner_plot_id, fields, phone, message_templa
         message_text=message_text,
         claim_values_json=json.dumps(package["values"], ensure_ascii=False),
         filename=package["filename"],
+        status="queued",
+        attempts=0,
+        created_at=now_utc_naive(),
+    )
+    session.add(queued)
+    session.flush()
+    return queued
+
+
+def enqueue_whatsapp_debt_message(session, row, phone, message_template, batch_id):
+    normalized_phone = normalize_whatsapp_phone(phone)
+    plots = row.get("plots") or []
+    if not plots:
+        raise ValueError("не указан участок")
+    plot_numbers = ", ".join(
+        str(plot.get("plot_number") or "").strip()
+        for plot in plots
+        if str(plot.get("plot_number") or "").strip()
+    )
+    if not plot_numbers:
+        raise ValueError("не указан номер участка")
+    message_text = format_whatsapp_message(
+        message_template,
+        owner=row.get("owner") or "Собственник",
+        plot_number=plot_numbers,
+        claim_number="",
+        debt=format_ru_money(row.get("total_debt")),
+    )
+    queued = WhatsAppMessage(
+        batch_id=batch_id,
+        claim_number=0,
+        owner_plot_id=plots[0]["owner_plot_id"],
+        owner_name=row.get("owner") or "Собственник",
+        plot_number=plot_numbers[:64],
+        phone=normalized_phone,
+        message_text=message_text,
+        claim_values_json="{}",
+        filename="",
         status="queued",
         attempts=0,
         created_at=now_utc_naive(),
@@ -1209,6 +1250,7 @@ def create_app():
             max_months=max_months,
             claim_count=sum(len(row["plots"]) for row in rows),
             whatsapp_message=DEFAULT_MESSAGE_TEMPLATE,
+            whatsapp_debt_message=DEFAULT_DEBT_REMINDER_TEMPLATE,
             db_error=db_error,
         )
 
@@ -1624,6 +1666,7 @@ def create_app():
                 owner="Собственник",
                 plot_number="0",
                 claim_number=0,
+                debt="12 345 руб. 67 коп.",
             )
             batch_id = f"bulk-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
             queued_count = 0
@@ -1657,6 +1700,71 @@ def create_app():
 
         if queued_count:
             text = f"В очередь WhatsApp добавлено документов: {queued_count}"
+            if skipped:
+                examples = "; ".join(skipped[:3])
+                suffix = f"; и ещё {len(skipped) - 3}" if len(skipped) > 3 else ""
+                text += f". Пропущено: {len(skipped)} ({examples}{suffix})"
+            flash(text, "success")
+            return redirect(url_for("whatsapp_admin", batch_id=batch_id))
+
+        details = "; ".join(skipped[:5])
+        if len(skipped) > 5:
+            details += f"; и ещё {len(skipped) - 5}"
+        flash(f"В очередь ничего не добавлено. {details}", "error")
+        return redirect(url_for("debtors", **redirect_arguments))
+
+    @app.post("/admin/debtors/whatsapp-message")
+    def debtors_whatsapp_message():
+        min_months, min_months_value = parse_min_months(request.form.get("months_from", "1"))
+        max_months, max_months_value = parse_max_months(request.form.get("months_to", ""))
+        redirect_arguments = {"months_from": min_months, "months_to": max_months}
+        if request.form.get("confirm") != "yes":
+            flash("Для рассылки подтвердите постановку сообщений в очередь", "error")
+            return redirect(url_for("debtors", **redirect_arguments))
+
+        try:
+            rows, _stats, _phones = load_debtors_report(min_months_value, max_months_value)
+            message_template = (
+                request.form.get("whatsapp_debt_message")
+                or DEFAULT_DEBT_REMINDER_TEMPLATE
+            )
+            format_whatsapp_message(
+                message_template,
+                owner="Собственник",
+                plot_number="10",
+                claim_number="",
+                debt="12 345 руб. 67 коп.",
+            )
+            batch_id = f"message-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:8]}"
+            queued_count = 0
+            skipped = []
+            Session = make_session_factory()
+            with Session() as session:
+                for row in rows:
+                    phone = first_whatsapp_phone(row["phones"])
+                    if not phone:
+                        skipped.append(f"{row['owner']}: нет корректного телефона")
+                        continue
+                    try:
+                        with session.begin_nested():
+                            enqueue_whatsapp_debt_message(
+                                session,
+                                row,
+                                phone,
+                                message_template,
+                                batch_id,
+                            )
+                        queued_count += 1
+                    except ValueError as exc:
+                        skipped.append(f"{row['owner']}: {exc}")
+                session.commit()
+        except Exception as exc:
+            app.logger.exception("Не удалось создать рассылку WhatsApp")
+            flash(f"Не удалось создать рассылку WhatsApp: {exc}", "error")
+            return redirect(url_for("debtors", **redirect_arguments))
+
+        if queued_count:
+            text = f"В очередь WhatsApp добавлено сообщений: {queued_count}"
             if skipped:
                 examples = "; ".join(skipped[:3])
                 suffix = f"; и ещё {len(skipped) - 3}" if len(skipped) > 3 else ""

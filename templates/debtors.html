@@ -47,6 +47,35 @@
   <textarea id="phones-text" hidden>{{ phone_text }}</textarea>
   <section class="section" style="margin-bottom: 16px;">
     <div class="section-head">
+      <h2>Рассылка сообщений в WhatsApp</h2>
+      <a class="button secondary" href="{{ url_for('whatsapp_admin') }}">Авторизация и очередь</a>
+    </div>
+    <div class="form-body">
+      <p class="muted" style="margin-top: 0;">
+        Будет создано по одному сообщению на каждого собственника из текущего фильтра.
+        Если участков несколько, в сообщение попадёт их список и общая сумма задолженности.
+      </p>
+      <form class="form-grid" method="post" action="{{ url_for('debtors_whatsapp_message') }}">
+        <input type="hidden" name="months_from" value="{{ min_months }}">
+        <input type="hidden" name="months_to" value="{{ max_months }}">
+        <label class="field field-wide">
+          <span>Текст сообщения</span>
+          <textarea class="input" name="whatsapp_debt_message" rows="10" maxlength="1000" required>{{ whatsapp_debt_message }}</textarea>
+          <span>Можно использовать: {owner}, {plot_number}, {debt} (или {сумма}).</span>
+        </label>
+        <label class="field field-wide" style="display: flex; grid-template-columns: auto 1fr; align-items: center;">
+          <input type="checkbox" name="confirm" value="yes" required>
+          <span>Подтверждаю рассылку сообщений по текущему фильтру</span>
+        </label>
+        <div class="field-wide">
+          <button class="button" type="submit">Поставить {{ stats.count }} сообщений в очередь</button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <section class="section" style="margin-bottom: 16px;">
+    <div class="section-head">
       <h2>Массовая отправка претензий в WhatsApp</h2>
       <a class="button secondary" href="{{ url_for('whatsapp_admin') }}">Авторизация и очередь</a>
     </div>

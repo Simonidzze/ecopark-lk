@@ -21,7 +21,16 @@ DEFAULT_MESSAGE_TEMPLATE = (
     "Направляем досудебную претензию по участку № {plot_number}, "
     "исх. № {claim_number}. PDF приложен к сообщению."
 )
-ALLOWED_MESSAGE_FIELDS = {"owner", "plot_number", "claim_number"}
+DEFAULT_DEBT_REMINDER_TEMPLATE = (
+    "{owner}, добрый день!\n\n"
+    "Напоминаем о необходимости погасить задолженность за содержание и "
+    "обслуживание территории ТСН «Микрорайон Экопарк».\n\n"
+    "Участок: № {plot_number}\n"
+    "Сумма задолженности: {debt}\n\n"
+    "Реквизиты и способы оплаты: https://tsn-ecopark.ru/pays_details/\n\n"
+    "Если оплата уже произведена, пожалуйста, не учитывайте это сообщение."
+)
+ALLOWED_MESSAGE_FIELDS = {"owner", "plot_number", "claim_number", "debt", "сумма"}
 
 
 class WhatsAppServiceError(RuntimeError):
@@ -54,18 +63,23 @@ class _StrictFormat(dict):
     def __missing__(self, key):
         raise ValueError(
             "Неизвестное поле в тексте сообщения: "
-            f"{{{key}}}. Доступны: {{owner}}, {{plot_number}}, {{claim_number}}"
+            f"{{{key}}}. Доступны: {{owner}}, {{plot_number}}, "
+            "{claim_number}, {debt}, {сумма}"
         )
 
 
 def format_whatsapp_message(template, **values):
+    if "debt" in values:
+        values.setdefault("сумма", values["debt"])
+    elif "сумма" in values:
+        values.setdefault("debt", values["сумма"])
     text = str(template or DEFAULT_MESSAGE_TEMPLATE).strip()
     try:
         for _literal, field_name, format_spec, conversion in Formatter().parse(text):
             if field_name and field_name not in ALLOWED_MESSAGE_FIELDS:
                 raise ValueError(
                     f"Неизвестное поле в тексте сообщения: {{{field_name}}}. "
-                    "Доступны: {owner}, {plot_number}, {claim_number}"
+                    "Доступны: {owner}, {plot_number}, {claim_number}, {debt}, {сумма}"
                 )
             if format_spec or conversion:
                 raise ValueError(
@@ -135,6 +149,16 @@ class WhatsAppClient:
         }
         return self._request("POST", "/send", json=payload)
 
+    def send_text(self, phone, message):
+        return self._request(
+            "POST",
+            "/send-text",
+            json={
+                "phone": normalize_whatsapp_phone(phone),
+                "message": message,
+            },
+        )
+
 
 def whatsapp_queue_stats(session):
     return dict(
@@ -156,7 +180,7 @@ def fail_stale_processing_messages(session, minutes=30):
             status="failed",
             error_text=(
                 "Отправка была прервана. Перед повтором проверьте WhatsApp, "
-                "чтобы не отправить документ дважды."
+                "чтобы не отправить сообщение или документ дважды."
             ),
         )
     )
@@ -186,8 +210,11 @@ def process_next_whatsapp_message(client=None, session_factory=None):
         session.commit()
 
     try:
-        document = render_pretrial_claim_pdf(json.loads(values_json))
-        result = client.send_pdf(phone, text, filename, document)
+        if filename:
+            document = render_pretrial_claim_pdf(json.loads(values_json))
+            result = client.send_pdf(phone, text, filename, document)
+        else:
+            result = client.send_text(phone, text)
     except Exception as exc:
         next_status = "failed"
         with Session() as session:

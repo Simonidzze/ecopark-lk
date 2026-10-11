@@ -19,7 +19,7 @@
 
   <div class="message error" style="margin-bottom: 16px;">
     Это неофициальное подключение через WhatsApp Web для личного номера. WhatsApp может ограничить такой аккаунт.
-    Используйте отправку только собственникам, которым ТСН вправе направлять документы, и не уменьшайте интервал очереди без необходимости.
+    Используйте рассылку только собственникам, которым ТСН вправе направлять документы, и не уменьшайте интервал очереди без необходимости.
   </div>
 
   <div class="grid" style="margin-bottom: 16px;">
@@ -78,7 +78,7 @@
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>Создано</th><th>Собственник / участок</th><th>Телефон</th><th>Исх. №</th><th>Статус</th><th>Результат</th></tr>
+          <tr><th>Создано</th><th>Собственник / участок</th><th>Телефон</th><th>Тип / исх. №</th><th>Статус</th><th>Результат</th></tr>
         </thead>
         <tbody>
           {% for message in messages %}
@@ -86,7 +86,7 @@
               <td>{{ message.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
               <td><a href="{{ url_for('plot_detail', owner_plot_id=message.owner_plot_id) }}">{{ message.owner_name }} / {{ message.plot_number }}</a></td>
               <td>+{{ message.phone }}</td>
-              <td>{{ message.claim_number }}</td>
+              <td>{% if message.filename %}Претензия № {{ message.claim_number }}{% else %}Сообщение{% endif %}</td>
               <td>
                 <span class="status {% if message.status == 'sent' %}ok{% elif message.status == 'failed' %}error{% endif %}">
                   {{ {'queued':'в очереди', 'processing':'отправляется', 'sent':'отправлено', 'failed':'ошибка'}.get(message.status, message.status) }}
