@@ -160,6 +160,36 @@ class WhatsAppTest(unittest.TestCase):
             self.assertEqual(sent.status, "sent")
             self.assertEqual(sent.external_message_id, "false_79990000000@test")
 
+    def test_queues_text_message_from_plot_card_without_claim(self):
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session):
+            client = create_app().test_client()
+            page = client.get("/admin/plots/owner-plot-1")
+            response = client.post(
+                "/admin/plots/owner-plot-1/whatsapp-message",
+                data={
+                    "whatsapp_phone": "8 (999) 000-00-00",
+                    "whatsapp_debt_message": "{owner}: участок {plot_number}, долг {сумма}",
+                },
+            )
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Сообщение в WhatsApp", page.get_data(as_text=True))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn("/admin/whatsapp", response.headers["Location"])
+        with self.Session() as session:
+            queued = session.scalar(select(WhatsAppMessage))
+            claim = session.scalar(select(PretrialClaim))
+
+        self.assertIsNone(claim)
+        self.assertEqual(queued.claim_number, 0)
+        self.assertEqual(queued.filename, "")
+        self.assertEqual(queued.phone, "79990000000")
+        self.assertEqual(
+            queued.message_text,
+            "Иванов Иван Иванович: участок 42А, долг 12 345 руб. 67 коп.",
+        )
+        self.assertTrue(queued.batch_id.startswith("message-single-"))
+
     def test_debt_message_route_queues_one_text_per_owner_and_worker_sends_it(self):
         report = ([{
             "owner": "Иванов Иван Иванович",

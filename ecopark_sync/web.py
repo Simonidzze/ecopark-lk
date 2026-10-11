@@ -1469,6 +1469,7 @@ def create_app():
                     split_phones(details["phone"])
                 )
                 claim_defaults["whatsapp_message"] = DEFAULT_MESSAGE_TEMPLATE
+                claim_defaults["whatsapp_debt_message"] = DEFAULT_DEBT_REMINDER_TEMPLATE
 
                 organization_fields = (
                     ("TSN_LEGAL_ADDRESS", "юридический или почтовый адрес ТСН"),
@@ -1645,6 +1646,62 @@ def create_app():
 
         flash(
             f"Претензия исх. № {queued.claim_number} поставлена в очередь WhatsApp на +{queued.phone}",
+            "success",
+        )
+        return redirect(url_for("whatsapp_admin", batch_id=batch_id))
+
+    @app.post("/admin/plots/<owner_plot_id>/whatsapp-message")
+    def plot_whatsapp_message(owner_plot_id):
+        batch_id = f"message-single-{uuid.uuid4().hex}"
+        phone = request.form.get("whatsapp_phone", "")
+        message_template = (
+            request.form.get("whatsapp_debt_message")
+            or DEFAULT_DEBT_REMINDER_TEMPLATE
+        )
+        Session = make_session_factory()
+        try:
+            with Session() as session:
+                details = session.execute(
+                    select(
+                        OwnerPlot.id,
+                        OwnerPlot.owner,
+                        OwnerPlot.plot_number,
+                        Balance.total,
+                    )
+                    .outerjoin(Balance, Balance.owner_plot_id == OwnerPlot.id)
+                    .where(OwnerPlot.id == owner_plot_id)
+                ).mappings().first()
+                if details is None:
+                    raise LookupError(owner_plot_id)
+                queued = enqueue_whatsapp_debt_message(
+                    session,
+                    {
+                        "owner": details["owner"],
+                        "plots": [
+                            {
+                                "owner_plot_id": details["id"],
+                                "plot_number": details["plot_number"],
+                            }
+                        ],
+                        "total_debt": details["total"],
+                    },
+                    phone,
+                    message_template,
+                    batch_id,
+                )
+                session.commit()
+        except LookupError:
+            abort(404)
+        except ValueError as exc:
+            flash(f"Не удалось поставить сообщение в очередь WhatsApp: {exc}", "error")
+            return redirect(url_for("plot_detail", owner_plot_id=owner_plot_id))
+        except Exception as exc:
+            app.logger.exception("Не удалось создать отправку сообщения WhatsApp")
+            flash(f"Не удалось поставить сообщение в очередь WhatsApp: {exc}", "error")
+            return redirect(url_for("plot_detail", owner_plot_id=owner_plot_id))
+
+        flash(
+            f"Сообщение по участку № {queued.plot_number} поставлено в очередь WhatsApp на +{queued.phone}",
             "success",
         )
         return redirect(url_for("whatsapp_admin", batch_id=batch_id))

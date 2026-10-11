@@ -66,6 +66,32 @@
 
     <section class="section" style="margin-bottom: 16px;">
       <div class="section-head">
+        <h2>Сообщение в WhatsApp</h2>
+        <span class="status">без PDF</span>
+      </div>
+      <div class="form-body">
+        <form class="form-grid" method="post" action="{{ url_for('plot_whatsapp_message', owner_plot_id=details.id) }}">
+          <label class="field">
+            <span>Телефон</span>
+            <input class="input" type="tel" name="whatsapp_phone" value="{{ claim_defaults.whatsapp_phone }}" placeholder="79990000000" required>
+          </label>
+          <div class="field muted" style="align-content: end;">
+            Отправка выполняется через <a href="{{ url_for('whatsapp_admin') }}">общую очередь WhatsApp</a>.
+          </div>
+          <label class="field field-wide">
+            <span>Текст сообщения</span>
+            <textarea class="input" name="whatsapp_debt_message" rows="10" maxlength="1000" required>{{ claim_defaults.whatsapp_debt_message }}</textarea>
+            <span>Можно использовать: {owner}, {plot_number}, {debt} (или {сумма}).</span>
+          </label>
+          <div class="field-wide">
+            <button class="button" type="submit">Поставить сообщение в очередь</button>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section class="section" style="margin-bottom: 16px;">
+      <div class="section-head">
         <h2>Досудебная претензия</h2>
         <span class="status">PDF</span>
       </div>
