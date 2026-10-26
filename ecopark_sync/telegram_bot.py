@@ -38,10 +38,13 @@ class TelegramAPIError(RuntimeError):
 
 
 class TelegramBotClient:
-    def __init__(self, token=None, timeout=None, session=None):
+    def __init__(self, token=None, timeout=None, session=None, api_base_url=None):
         self.token = token or env("TELEGRAM_BOT_TOKEN", required=True)
         self.timeout = float(timeout or env("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "60"))
-        self.base_url = f"https://api.telegram.org/bot{self.token}"
+        api_base_url = api_base_url or env(
+            "TELEGRAM_API_BASE_URL", "https://api.telegram.org/bot"
+        )
+        self.base_url = f"{api_base_url.rstrip('/')}{self.token}"
         self.session = session or requests.Session()
 
     def call(self, method, payload=None, timeout=None):
@@ -78,6 +81,9 @@ class TelegramBotClient:
                 "commands": [
                     {"command": "start", "description": "Открыть меню"},
                     {"command": "debt", "description": DEBT_BUTTON},
+                    {"command": "contacts", "description": "Полезные контакты"},
+                    {"command": "rating", "description": "Рейтинг соседей"},
+                    {"command": "me", "description": "Моя репутация"},
                 ]
             },
         )
@@ -85,17 +91,42 @@ class TelegramBotClient:
     def get_updates(self, offset=None, poll_timeout=30):
         payload = {
             "timeout": poll_timeout,
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "message_reaction", "callback_query"],
         }
         if offset is not None:
             payload["offset"] = offset
         return self.call("getUpdates", payload, timeout=poll_timeout + self.timeout)
 
-    def send_message(self, chat_id, text, reply_markup=None):
+    def send_message(
+        self,
+        chat_id,
+        text,
+        reply_markup=None,
+        *,
+        message_thread_id=None,
+        reply_to_message_id=None,
+        parse_mode=None,
+    ):
         payload = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
+        if message_thread_id is not None:
+            payload["message_thread_id"] = message_thread_id
+        if reply_to_message_id is not None:
+            payload["reply_parameters"] = {
+                "message_id": reply_to_message_id,
+                "allow_sending_without_reply": True,
+            }
+        if parse_mode is not None:
+            payload["parse_mode"] = parse_mode
+            payload["link_preview_options"] = {"is_disabled": True}
         return self.call("sendMessage", payload)
+
+    def answer_callback_query(self, callback_query_id):
+        return self.call("answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+    def get_me(self):
+        return self.call("getMe")
 
 
 def money(value):
@@ -228,10 +259,20 @@ def submit_registration(session, profile, phone):
     return request_row
 
 
-def handle_update(update, client, session_factory=None):
+def handle_update(update, client, session_factory=None, bot_user_id=None):
     message = update.get("message") or {}
-    if not message or (message.get("chat") or {}).get("type") not in {None, "private"}:
-        return False
+    chat_type = (message.get("chat") or {}).get("type")
+    is_private_message = bool(message) and chat_type in {None, "private"}
+    if not is_private_message:
+        from .community import CommunityProcessor
+
+        Session = session_factory or make_session_factory()
+        if bot_user_id is None:
+            bot_user_id = int(client.get_me()["id"])
+        with Session() as session:
+            CommunityProcessor(session, client, bot_user_id).process_update(update)
+            session.commit()
+        return True
 
     text = str(message.get("text") or "").strip()
     Session = session_factory or make_session_factory()
@@ -356,13 +397,20 @@ def handle_update(update, client, session_factory=None):
 
 
 def run_telegram_bot(client=None, session_factory=None):
-    from .schema import ensure_telegram_schema
+    from .community import seed_community_defaults
+    from .models import BotSettings
+    from .schema import ensure_community_schema, ensure_telegram_schema
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     ensure_telegram_schema()
+    ensure_community_schema()
+    Session = session_factory or make_session_factory()
+    with Session() as session:
+        settings = seed_community_defaults(session)
+        offset = int(settings.telegram_update_offset or 0)
     client = client or TelegramBotClient()
     client.configure()
-    offset = None
+    bot_user_id = int(client.get_me()["id"])
     poll_timeout = int(env("TELEGRAM_POLL_TIMEOUT_SECONDS", "30"))
     retry_delay = float(env("TELEGRAM_RETRY_DELAY_SECONDS", "5"))
     LOGGER.info("Telegram bot started")
@@ -371,8 +419,18 @@ def run_telegram_bot(client=None, session_factory=None):
         try:
             updates = client.get_updates(offset=offset, poll_timeout=poll_timeout)
             for update in updates:
-                handle_update(update, client, session_factory=session_factory)
+                handle_update(
+                    update,
+                    client,
+                    session_factory=Session,
+                    bot_user_id=bot_user_id,
+                )
                 offset = int(update["update_id"]) + 1
+                with Session() as session:
+                    settings = session.get(BotSettings, 1)
+                    settings.telegram_update_offset = offset
+                    settings.updated_at = now_utc_naive()
+                    session.commit()
         except TelegramAPIError:
             LOGGER.exception("Telegram API error")
             time.sleep(retry_delay)

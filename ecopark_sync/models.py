@@ -2,7 +2,20 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, Date, DateTime, Index, Integer, Numeric, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -411,3 +424,221 @@ class WhatsAppMessage(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+# Ecoparkovich tables keep their original names so their data can be imported
+# without remapping identifiers or losing delivery and reputation history.
+class BotSettings(Base):
+    __tablename__ = "bot_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    telegram_token: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    telegram_api_base_url: Mapped[str] = mapped_column(
+        String(500), nullable=False, default="https://api.telegram.org/bot"
+    )
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
+    send_existing_on_first_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    telegram_update_offset: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class NotificationType(Base):
+    __tablename__ = "notification_types"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_key: Mapped[str] = mapped_column(String(80), nullable=False, unique=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_url: Mapped[Optional[str]] = mapped_column(String(1000))
+    match_text: Mapped[str] = mapped_column(String(255), nullable=False, default="экопарк")
+    poll_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=3600)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    initialized_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    force_check_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    next_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    last_check_status: Mapped[Optional[str]] = mapped_column(String(32))
+    last_check_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class NotificationSource(Base):
+    __tablename__ = "notification_sources"
+    __table_args__ = (
+        UniqueConstraint("source_key", name="uq_notification_source_key"),
+        Index("idx_notification_sources_type", "notification_type_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    notification_type_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_types.id", ondelete="CASCADE"), nullable=False
+    )
+    source_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    api_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    initialized_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class NotificationDestination(Base):
+    __tablename__ = "notification_destinations"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "message_thread_id", name="uq_destination_chat_thread"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_thread_id: Mapped[Optional[int]] = mapped_column(Integer)
+    reputation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    directory_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reputation_cooldown_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=24)
+    thanks_phrases: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="спасибо\nблагодарю\nспасибо за помощь\nвыручил\nвыручила",
+    )
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class DirectoryEntry(Base):
+    __tablename__ = "directory_entries"
+    __table_args__ = (Index("idx_directory_entries_destination", "destination_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(255), nullable=False, default="Общее")
+    phone: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    url: Mapped[Optional[str]] = mapped_column(String(1000))
+    keywords: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class CommunityUser(Base):
+    __tablename__ = "community_users"
+    __table_args__ = (
+        UniqueConstraint(
+            "destination_id", "telegram_user_id", name="uq_community_user_destination_telegram"
+        ),
+        Index("idx_community_users_reputation", "reputation"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), nullable=False
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    username: Mapped[Optional[str]] = mapped_column(String(255))
+    first_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    reputation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class CommunityMessage(Base):
+    __tablename__ = "community_messages"
+    __table_args__ = (
+        UniqueConstraint("chat_id", "message_id", name="uq_community_chat_message"),
+        Index("idx_community_messages_destination", "destination_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), nullable=False
+    )
+    chat_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    message_thread_id: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class ReputationEvent(Base):
+    __tablename__ = "reputation_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "destination_id",
+            "giver_user_id",
+            "source_kind",
+            "source_chat_id",
+            "source_message_id",
+            name="uq_reputation_source_giver",
+        ),
+        Index("idx_reputation_events_receiver", "receiver_user_id"),
+        Index("idx_reputation_events_created", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), nullable=False
+    )
+    giver_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    receiver_user_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_chat_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_message_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class NotificationSubscription(Base):
+    __tablename__ = "notification_subscriptions"
+
+    notification_type_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_types.id", ondelete="CASCADE"), primary_key=True
+    )
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class OutageEvent(Base):
+    __tablename__ = "outage_events"
+    __table_args__ = (
+        UniqueConstraint("notification_type_id", "fingerprint", name="uq_event_type_fingerprint"),
+        Index("idx_outage_events_type", "notification_type_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    notification_type_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_types.id", ondelete="CASCADE"), nullable=False
+    )
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class NotificationDelivery(Base):
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (
+        UniqueConstraint("event_id", "destination_id", name="uq_event_destination"),
+        Index("idx_notification_deliveries_status", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("outage_events.id", ondelete="CASCADE"), nullable=False
+    )
+    destination_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("notification_destinations.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[Optional[str]] = mapped_column(Text)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)

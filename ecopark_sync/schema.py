@@ -10,10 +10,21 @@ from .expense_allocations import (
 )
 from .models import (
     Base,
+    BotSettings,
+    CommunityMessage,
+    CommunityUser,
+    DirectoryEntry,
     Expense,
     ExpenseAllocation,
     ExpenseAllocationRule,
     ExpenseBudgetCategory,
+    NotificationDelivery,
+    NotificationDestination,
+    NotificationSource,
+    NotificationSubscription,
+    NotificationType,
+    OutageEvent,
+    ReputationEvent,
     TelegramBinding,
     TelegramLinkRequest,
     TelegramProfile,
@@ -42,6 +53,25 @@ def ensure_telegram_schema():
     TelegramProfile.__table__.create(engine, checkfirst=True)
     TelegramLinkRequest.__table__.create(engine, checkfirst=True)
     TelegramBinding.__table__.create(engine, checkfirst=True)
+
+
+def ensure_community_schema():
+    """Create the tables transferred from Ecoparkovich in dependency order."""
+    engine = get_engine()
+    for table in (
+        BotSettings.__table__,
+        NotificationType.__table__,
+        NotificationSource.__table__,
+        NotificationDestination.__table__,
+        DirectoryEntry.__table__,
+        CommunityUser.__table__,
+        CommunityMessage.__table__,
+        ReputationEvent.__table__,
+        NotificationSubscription.__table__,
+        OutageEvent.__table__,
+        NotificationDelivery.__table__,
+    ):
+        table.create(engine, checkfirst=True)
 
 
 def ensure_expense_schema():

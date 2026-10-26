@@ -812,11 +812,16 @@ def create_app():
 
     if env("TELEGRAM_AUTO_INIT_SCHEMA", "false").lower() in {"1", "true", "yes", "y"}:
         try:
-            from .schema import ensure_telegram_schema
+            from .community import seed_community_defaults
+            from .schema import ensure_community_schema, ensure_telegram_schema
 
             ensure_telegram_schema()
+            ensure_community_schema()
+            Session = make_session_factory()
+            with Session() as session:
+                seed_community_defaults(session)
         except Exception:
-            app.logger.exception("Не удалось подготовить таблицы Telegram")
+            app.logger.exception("Не удалось подготовить таблицы Telegram и сообщества")
 
     @app.get("/")
     def index():
@@ -2116,6 +2121,10 @@ def create_app():
         scheduler = make_scheduler()
         scheduler.start_background()
         app.extensions["ecopark_sync_scheduler"] = scheduler
+
+    from .community_web import register_community_routes
+
+    register_community_routes(app)
 
     return app
 

@@ -1,9 +1,9 @@
-.git
-.venv
-__pycache__
+**/._*
+**/__pycache__/
 *.pyc
-.env
-env.prod
-google-service-account.json
-sync.log
-.DS_Store
+.git/
+.venv/
+tests/
+onec/
+output/
+tmp/

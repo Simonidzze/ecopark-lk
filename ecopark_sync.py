@@ -46,6 +46,12 @@ def command_telegram_bot(_args):
     run_telegram_bot()
 
 
+def command_outage_worker(_args):
+    from ecopark_sync.outage_worker import run_outage_worker
+
+    run_outage_worker()
+
+
 def command_export_sheets(_args):
     from ecopark_sync.sheets import export_to_google_sheets
 
@@ -96,6 +102,11 @@ def build_parser():
         "telegram-bot", help="Run the Telegram bot using long polling"
     )
     telegram_parser.set_defaults(func=command_telegram_bot)
+
+    outage_parser = subparsers.add_parser(
+        "outage-worker", help="Check outage sources and send Telegram notifications"
+    )
+    outage_parser.set_defaults(func=command_outage_worker)
 
     export_parser = subparsers.add_parser("export-sheets", help="Export current MySQL data to Google Sheets")
     export_parser.set_defaults(func=command_export_sheets)

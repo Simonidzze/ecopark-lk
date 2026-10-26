@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+
+{% block title %}Сообщество и оповещения — Ecopark LK{% endblock %}
+
+{% block actions %}
+  <form method="post" action="{{ url_for('community_check_now') }}">
+    <button class="button" type="submit">Проверить отключения сейчас</button>
+  </form>
+{% endblock %}
+
+{% block content %}
+  <section class="metrics">
+    <div class="metric"><div class="label">Событий</div><div class="value">{{ stats.events }}</div></div>
+    <div class="metric"><div class="label">Отправлено</div><div class="value">{{ stats.sent }}</div></div>
+    <div class="metric"><div class="label">Ожидает</div><div class="value">{{ stats.pending }}</div></div>
+    <div class="metric"><div class="label">Ошибок</div><div class="value">{{ stats.failed }}</div></div>
+  </section>
+
+  <section class="section" style="margin-bottom:20px">
+    <div class="section-head"><h2>Настройки</h2></div>
+    <form class="form-body" method="post" action="{{ url_for('community_settings') }}">
+      <div class="form-grid">
+        <label class="field">Токен Telegram
+          <input class="input" value="{% if token_configured %}Задан в env.prod{% else %}Не задан{% endif %}" disabled>
+        </label>
+        <label class="field">Таймаут запросов, секунд
+          <input class="input" type="number" min="1" name="request_timeout_seconds" value="{{ settings.request_timeout_seconds }}" required>
+        </label>
+        <label class="field field-wide">
+          <span><input type="checkbox" name="send_existing_on_first_run" value="1" {% if settings.send_existing_on_first_run %}checked{% endif %}> Отправлять найденные события при первой проверке нового источника</span>
+        </label>
+      </div>
+      <div class="toolbar" style="margin-top:14px"><button class="button" type="submit">Сохранить настройки</button></div>
+    </form>
+  </section>
+
+  <section class="section" id="types" style="margin-bottom:20px">
+    <div class="section-head"><h2>Оповещения об отключениях</h2></div>
+    {% for item in notification_types %}
+      <form class="form-body" method="post" action="{{ url_for('community_type_update', type_id=item.id) }}" style="border-bottom:1px solid var(--border)">
+        <div class="form-grid">
+          <label class="field">Название<input class="input" name="name" value="{{ item.name }}" required></label>
+          <label class="field">Строка поиска<input class="input" name="match_text" value="{{ item.match_text }}" required></label>
+          <label class="field">Интервал, секунд<input class="input" type="number" min="10" name="poll_interval_seconds" value="{{ item.poll_interval_seconds }}" required></label>
+          <label class="field"><span>Состояние</span><span><input type="checkbox" name="enabled" value="1" {% if item.enabled %}checked{% endif %}> Включено</span></label>
+          <div class="field field-wide">
+            <span>Каналы и топики</span>
+            <div class="toolbar">
+              {% for destination in destinations %}
+                <label><input type="checkbox" name="destination_ids" value="{{ destination.id }}" {% if destination.id in destination_ids_by_type.get(item.id, []) %}checked{% endif %}> {{ destination.name }}</label>
+              {% else %}<span class="muted">Сначала добавьте канал</span>{% endfor %}
+            </div>
+          </div>
+          <div class="field field-wide muted">
+            Источники: {% for source in sources_by_type.get(item.id, []) %}{{ source.name }}{% if not loop.last %}, {% endif %}{% endfor %}<br>
+            Последняя проверка: {{ item.last_check_at or 'ещё не выполнялась' }}{% if item.last_check_message %} — {{ item.last_check_message }}{% endif %}
+          </div>
+        </div>
+        <div class="toolbar" style="margin-top:14px"><button class="button" type="submit">Сохранить</button></div>
+      </form>
+    {% endfor %}
+  </section>
+
+  <section class="section" id="destinations" style="margin-bottom:20px">
+    <div class="section-head"><h2>Каналы, группы и топики</h2></div>
+    <form class="form-body" method="post" action="{{ url_for('community_destination_add') }}" style="border-bottom:1px solid var(--border)">
+      <div class="form-grid">
+        <label class="field">Название<input class="input" name="name" required></label>
+        <label class="field">Telegram chat ID<input class="input" name="chat_id" required></label>
+        <label class="field">ID топика (необязательно)<input class="input" type="number" min="1" name="message_thread_id"></label>
+      </div>
+      <div class="toolbar" style="margin-top:14px"><button class="button" type="submit">Добавить</button></div>
+    </form>
+
+    {% for destination in destinations %}
+      <details id="destination-{{ destination.id }}" style="border-bottom:1px solid var(--border)">
+        <summary style="padding:14px 16px;cursor:pointer;font-weight:650">{{ destination.name }} — {{ destination.chat_id }}{% if destination.message_thread_id %} / топик {{ destination.message_thread_id }}{% endif %}</summary>
+        <form class="form-body" method="post" action="{{ url_for('community_destination_update', destination_id=destination.id) }}">
+          <div class="form-grid">
+            <label class="field">Название<input class="input" name="name" value="{{ destination.name }}" required></label>
+            <label class="field">Chat ID<input class="input" name="chat_id" value="{{ destination.chat_id }}" required></label>
+            <label class="field">ID топика<input class="input" type="number" min="1" name="message_thread_id" value="{{ destination.message_thread_id or '' }}"></label>
+            <label class="field">Пауза между благодарностями, часов<input class="input" type="number" min="1" name="reputation_cooldown_hours" value="{{ destination.reputation_cooldown_hours }}"></label>
+            <label class="field field-wide">Фразы благодарности<textarea class="input" rows="3" name="thanks_phrases">{{ destination.thanks_phrases }}</textarea></label>
+            <div class="field field-wide"><div class="toolbar">
+              <label><input type="checkbox" name="enabled" value="1" {% if destination.enabled %}checked{% endif %}> Включён</label>
+              <label><input type="checkbox" name="reputation_enabled" value="1" {% if destination.reputation_enabled %}checked{% endif %}> Репутация</label>
+              <label><input type="checkbox" name="directory_enabled" value="1" {% if destination.directory_enabled %}checked{% endif %}> Справочник</label>
+            </div></div>
+          </div>
+          <div class="toolbar" style="margin-top:14px"><button class="button" type="submit">Сохранить канал</button></div>
+        </form>
+        <div class="form-body" style="padding-top:0">
+          <div class="toolbar">
+            <form method="post" action="{{ url_for('community_destination_test', destination_id=destination.id) }}"><button class="button secondary" type="submit">Тест</button></form>
+            <form method="post" action="{{ url_for('community_destination_delete', destination_id=destination.id) }}" onsubmit="return confirm('Удалить канал и его историю?')"><button class="button danger" type="submit">Удалить</button></form>
+          </div>
+        </div>
+
+        <div class="form-body" id="directory-destination-{{ destination.id }}">
+          <h2>Справочник контактов</h2>
+          {% for entry in entries_by_destination.get(destination.id, []) %}
+            <form method="post" action="{{ url_for('community_directory_update', entry_id=entry.id) }}" class="form-grid" style="padding:12px 0;border-bottom:1px solid var(--border)">
+              <label class="field">Название<input class="input" name="name" value="{{ entry.name }}" required></label>
+              <label class="field">Категория<input class="input" name="category" value="{{ entry.category }}"></label>
+              <label class="field">Телефон<input class="input" name="phone" value="{{ entry.phone }}" required></label>
+              <label class="field">Ссылка<input class="input" name="url" value="{{ entry.url or '' }}"></label>
+              <label class="field">Ключевые слова<input class="input" name="keywords" value="{{ entry.keywords }}"></label>
+              <label class="field">Порядок<input class="input" type="number" min="1" name="position" value="{{ entry.position }}"></label>
+              <label class="field field-wide">Описание<textarea class="input" name="description">{{ entry.description or '' }}</textarea></label>
+              <label><input type="checkbox" name="enabled" value="1" {% if entry.enabled %}checked{% endif %}> Включён</label>
+              <div class="toolbar"><button class="button secondary" type="submit">Сохранить контакт</button></div>
+            </form>
+            <form method="post" action="{{ url_for('community_directory_delete', entry_id=entry.id) }}" style="margin:-50px 0 20px 180px"><button class="button danger" type="submit">Удалить</button></form>
+          {% endfor %}
+          <form method="post" action="{{ url_for('community_directory_add', destination_id=destination.id) }}" class="form-grid" style="padding-top:16px">
+            <label class="field">Название<input class="input" name="name" required></label>
+            <label class="field">Категория<input class="input" name="category" value="Общее"></label>
+            <label class="field">Телефон<input class="input" name="phone" required></label>
+            <label class="field">Ссылка<input class="input" name="url"></label>
+            <label class="field">Ключевые слова<input class="input" name="keywords"></label>
+            <label class="field">Порядок<input class="input" type="number" min="1" name="position" value="100"></label>
+            <label class="field field-wide">Описание<textarea class="input" name="description"></textarea></label>
+            <input type="hidden" name="enabled" value="1">
+            <div class="toolbar"><button class="button" type="submit">Добавить контакт</button></div>
+          </form>
+        </div>
+      </details>
+    {% else %}
+      <div class="form-body muted">Каналы пока не добавлены</div>
+    {% endfor %}
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>Последние доставки</h2></div>
+    <div class="table-scroll"><table>
+      <thead><tr><th>ID</th><th>Канал</th><th>Статус</th><th>Попытки</th><th>Отправлено</th><th>Ошибка</th></tr></thead>
+      <tbody>{% for delivery, event, destination in deliveries %}<tr>
+        <td>{{ delivery.id }}</td><td>{{ destination.name }}</td>
+        <td><span class="status {% if delivery.status == 'sent' %}ok{% elif delivery.status == 'failed' %}error{% endif %}">{{ delivery.status }}</span></td>
+        <td>{{ delivery.attempts }}</td><td>{{ delivery.sent_at or '' }}</td><td class="muted">{{ delivery.last_error or '' }}</td>
+      </tr>{% else %}<tr><td colspan="6" class="muted">Доставок пока нет</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </section>
+{% endblock %}

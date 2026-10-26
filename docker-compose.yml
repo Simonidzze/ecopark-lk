@@ -42,6 +42,16 @@ services:
       TZ: Asia/Novosibirsk
       TELEGRAM_AUTO_INIT_SCHEMA: "true"
 
+  outage-worker:
+    build: .
+    image: ecopark-lk:latest
+    restart: unless-stopped
+    command: ["python", "ecopark_sync.py", "--env-file", "/dev/null", "outage-worker"]
+    env_file:
+      - env.prod
+    environment:
+      TZ: Asia/Novosibirsk
+
   whatsapp:
     build: ./whatsapp-service
     image: ecopark-whatsapp-service:latest

@@ -347,6 +347,7 @@
           <a href="{{ url_for('monthly_expenses') }}" class="{% if request.endpoint == 'monthly_expenses' %}active{% endif %}">Расходы по месяцам</a>
           <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>
           <a href="{{ url_for('telegram_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('telegram_') %}active{% endif %}">Telegram</a>
+          <a href="{{ url_for('community_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('community_') %}active{% endif %}">Сообщество</a>
           <a href="{{ url_for('whatsapp_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('whatsapp') %}active{% endif %}">WhatsApp</a>
         </nav>
       </div>
