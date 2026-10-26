@@ -22,7 +22,7 @@
     <div class="section-head">
       <div>
         <h2>Заявки на привязку Telegram</h2>
-        <div class="muted">Проверьте ФИО, участок и телефон, затем выберите запись владельца из выгрузки 1С.</div>
+        <div class="muted">Проверьте ФИО, участок и телефон, затем выберите запись владельца из выгрузки 1С. Выбранный участок определяет владельца; доступ будет открыт ко всем его участкам. К одному владельцу можно привязать несколько Telegram-аккаунтов.</div>
       </div>
     </div>
     <div class="table-scroll">
@@ -94,17 +94,18 @@
     <div class="table-scroll">
       <table>
         <thead>
-          <tr><th>Владелец</th><th>Telegram ID</th><th>Дата привязки</th></tr>
+          <tr><th>Владелец</th><th>Telegram ID</th><th>Доступ</th><th>Дата привязки</th></tr>
         </thead>
         <tbody>
           {% for binding in bindings %}
             <tr>
               <td>{{ binding.owner }}</td>
               <td>{{ binding.telegram_user_id }}</td>
+              <td>Все участки владельца</td>
               <td>{{ binding.updated_at.strftime('%d.%m.%Y %H:%M') }}</td>
             </tr>
           {% else %}
-            <tr><td colspan="3" class="muted">Активных привязок пока нет</td></tr>
+            <tr><td colspan="4" class="muted">Активных привязок пока нет</td></tr>
           {% endfor %}
         </tbody>
       </table>

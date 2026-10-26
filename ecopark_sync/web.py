@@ -2010,7 +2010,8 @@ def create_app():
 
                 TelegramBotClient(token=telegram_token).send_message(
                     link_request.chat_id,
-                    "Заявка одобрена. Теперь задолженность доступна в меню.",
+                    "Заявка одобрена. Теперь в меню доступны задолженность и "
+                    "квитанции по всем вашим участкам.",
                     MENU_MARKUP,
                 )
             except Exception as exc:
@@ -2018,7 +2019,8 @@ def create_app():
                 notification_error = str(exc)
 
         flash(
-            f"Telegram @{link_request.username or link_request.telegram_user_id} привязан к {owner_plot.owner}",
+            f"Telegram @{link_request.username or link_request.telegram_user_id} "
+            f"привязан к {owner_plot.owner}; доступны все участки владельца",
             "success",
         )
         if notification_error:

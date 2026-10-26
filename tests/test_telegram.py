@@ -15,7 +15,13 @@ from ecopark_sync.models import (
     TelegramProfile,
     TelegramReceiptDelivery,
 )
-from ecopark_sync.telegram_bot import DEBT_BUTTON, MENU_MARKUP, RECEIPT_BUTTON, handle_update
+from ecopark_sync.telegram_bot import (
+    DEBT_BUTTON,
+    MENU_MARKUP,
+    RECEIPT_BUTTON,
+    debt_message,
+    handle_update,
+)
 from ecopark_sync.web import create_app
 
 
@@ -181,6 +187,88 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(request_row.status, "rejected")
         self.assertEqual(request_row.review_comment, "Данные не совпали")
         self.assertIsNone(binding)
+
+    def test_multiple_telegram_accounts_can_share_owner_and_all_plots(self):
+        self.submit_request()
+        now = datetime(2026, 10, 26, 13, 0)
+        with self.Session() as session:
+            first_request_id = session.scalar(select(TelegramLinkRequest.id))
+            session.add_all(
+                [
+                    OwnerPlot(
+                        id="owner-plot-2",
+                        owner_id="owner-1",
+                        owner="Иванов Иван Иванович",
+                        phone="+7 999 000-00-00",
+                        plot_id="plot-2",
+                        plot_number="43",
+                        account="000043",
+                        presentation="Иванов И.И., участок 43",
+                        organization_id="org-1",
+                        sync_run_id=1,
+                        synced_at=now,
+                    ),
+                    Balance(
+                        owner_plot_id="owner-plot-2",
+                        owner_id="owner-1",
+                        plot_id="plot-2",
+                        plot_number="43",
+                        account="000043",
+                        debt=Decimal("500.00"),
+                        penalty=Decimal("0"),
+                        overpayment=Decimal("0"),
+                        total=Decimal("500.00"),
+                        currency="RUB",
+                        sync_run_id=1,
+                        synced_at=now,
+                    ),
+                    TelegramLinkRequest(
+                        telegram_user_id="67890",
+                        chat_id="67890",
+                        username="family_member",
+                        full_name="Иванова Мария Ивановна",
+                        plot_number="42А",
+                        phone="79991111111",
+                        status="pending",
+                        owner_id=None,
+                        owner_plot_id=None,
+                        review_comment="",
+                        created_at=now,
+                        reviewed_at=None,
+                    ),
+                ]
+            )
+            session.commit()
+            second_request_id = session.scalar(
+                select(TelegramLinkRequest.id).where(
+                    TelegramLinkRequest.telegram_user_id == "67890"
+                )
+            )
+
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session):
+            client = create_app().test_client()
+            first_response = client.post(
+                f"/admin/telegram/requests/{first_request_id}/approve",
+                data={"owner_plot_id": "owner-plot-1"},
+            )
+            second_response = client.post(
+                f"/admin/telegram/requests/{second_request_id}/approve",
+                data={"owner_plot_id": "owner-plot-1"},
+            )
+
+        self.assertEqual(first_response.status_code, 302)
+        self.assertEqual(second_response.status_code, 302)
+        with self.Session() as session:
+            bindings = session.scalars(
+                select(TelegramBinding).where(TelegramBinding.owner_id == "owner-1")
+            ).all()
+            second_account_debt = debt_message(session, "67890")
+        self.assertEqual(
+            {binding.telegram_user_id for binding in bindings},
+            {"12345", "67890"},
+        )
+        self.assertIn("Участок № 42А", second_account_debt)
+        self.assertIn("Участок № 43", second_account_debt)
 
     def test_receipt_menu_button_queues_onec_pdf_delivery(self):
         now = datetime(2026, 10, 26, 12, 30)

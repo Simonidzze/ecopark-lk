@@ -55,19 +55,82 @@
     nav {
       display: flex;
       gap: 6px;
-      flex-wrap: wrap;
+      align-items: center;
     }
 
-    nav a {
+    nav > a,
+    .nav-group > summary {
       color: var(--muted);
       text-decoration: none;
       padding: 7px 9px;
       border-radius: 6px;
       font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      list-style: none;
     }
 
-    nav a:hover,
-    nav a.active {
+    .nav-group > summary::-webkit-details-marker { display: none; }
+
+    .nav-group > summary::after {
+      content: "⌄";
+      display: inline-block;
+      margin-left: 6px;
+      font-size: 12px;
+      transition: transform 0.15s ease;
+    }
+
+    .nav-group[open] > summary::after { transform: rotate(180deg); }
+
+    nav > a:hover,
+    nav > a.active,
+    .nav-group > summary:hover,
+    .nav-group > summary.active,
+    .nav-group[open] > summary {
+      background: #edf4f2;
+      color: var(--accent-dark);
+    }
+
+    .nav-group { position: relative; }
+
+    .nav-menu {
+      position: absolute;
+      z-index: 20;
+      top: calc(100% + 8px);
+      left: 0;
+      display: grid;
+      min-width: 250px;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 12px 30px rgba(29, 36, 48, 0.14);
+    }
+
+    .nav-group:last-child .nav-menu {
+      right: 0;
+      left: auto;
+    }
+
+    .nav-menu a {
+      display: grid;
+      gap: 1px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    .nav-menu a small {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 400;
+    }
+
+    .nav-menu a:hover,
+    .nav-menu a.active {
       background: #edf4f2;
       color: var(--accent-dark);
     }
@@ -329,6 +392,23 @@
         flex-direction: column;
         padding: 14px 0;
       }
+
+      .brand {
+        width: 100%;
+        gap: 10px;
+      }
+
+      nav { width: 100%; }
+
+      nav > a,
+      .nav-group > summary {
+        padding: 7px 8px;
+        font-size: 13px;
+      }
+
+      .nav-menu {
+        min-width: min(270px, calc(100vw - 32px));
+      }
     }
   </style>
 </head>
@@ -337,19 +417,34 @@
     <div class="wrap topbar">
       <div class="brand">
         <h1>Ecopark LK Admin</h1>
-        <nav aria-label="Разделы">
+        {% set finance_active = request.path.startswith('/admin/debts') or request.path.startswith('/admin/debtors') or request.path.startswith('/admin/plots') or request.path.startswith('/admin/incomes') or request.path.startswith('/admin/expenses') or request.path.startswith('/admin/expense-rules') or request.path.startswith('/admin/payments') %}
+        {% set communications_active = request.path.startswith('/admin/calls') or request.path.startswith('/admin/telegram') or request.path.startswith('/admin/community') or request.path.startswith('/admin/whatsapp') %}
+        <nav aria-label="Основная навигация">
           <a href="{{ url_for('admin') }}" class="{% if request.endpoint == 'admin' %}active{% endif %}">Обзор</a>
-          <a href="{{ url_for('debts') }}" class="{% if request.endpoint in ['debts', 'plot_detail'] %}active{% endif %}">Участки</a>
-          <a href="{{ url_for('monthly_debts') }}" class="{% if request.endpoint == 'monthly_debts' %}active{% endif %}">По месяцам</a>
-          <a href="{{ url_for('debtors') }}" class="{% if request.endpoint == 'debtors' %}active{% endif %}">Должники</a>
-          <a href="{{ url_for('incomes') }}" class="{% if request.endpoint == 'incomes' %}active{% endif %}">Прочие доходы</a>
-          <a href="{{ url_for('expenses') }}" class="{% if request.endpoint in ['expenses', 'expense_detail', 'save_expense_allocations', 'auto_expense_allocations', 'expense_report_xlsx', 'expense_rules', 'create_expense_rule', 'update_expense_rule', 'delete_expense_rule'] %}active{% endif %}">Расходы</a>
-          <a href="{{ url_for('monthly_expenses') }}" class="{% if request.endpoint == 'monthly_expenses' %}active{% endif %}">Расходы по месяцам</a>
-          <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>
-          <a href="{{ url_for('telegram_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('telegram_') and not request.endpoint.startswith('telegram_receipt') %}active{% endif %}">Telegram</a>
-          <a href="{{ url_for('telegram_receipts_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('telegram_receipt') %}active{% endif %}">Квитанции</a>
-          <a href="{{ url_for('community_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('community_') %}active{% endif %}">Сообщество</a>
-          <a href="{{ url_for('whatsapp_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('whatsapp') %}active{% endif %}">WhatsApp</a>
+
+          <details class="nav-group">
+            <summary class="{% if finance_active %}active{% endif %}">Финансы</summary>
+            <div class="nav-menu">
+              <a href="{{ url_for('debts') }}" class="{% if request.endpoint in ['debts', 'plot_detail'] %}active{% endif %}">Участки<small>Задолженность и карточки</small></a>
+              <a href="{{ url_for('monthly_debts') }}" class="{% if request.endpoint == 'monthly_debts' %}active{% endif %}">Долги по месяцам</a>
+              <a href="{{ url_for('debtors') }}" class="{% if request.endpoint == 'debtors' %}active{% endif %}">Должники</a>
+              <a href="{{ url_for('incomes') }}" class="{% if request.endpoint == 'incomes' %}active{% endif %}">Прочие доходы</a>
+              <a href="{{ url_for('expenses') }}" class="{% if request.endpoint in ['expenses', 'expense_detail', 'save_expense_allocations', 'auto_expense_allocations', 'expense_report_xlsx'] %}active{% endif %}">Расходы</a>
+              <a href="{{ url_for('monthly_expenses') }}" class="{% if request.endpoint == 'monthly_expenses' %}active{% endif %}">Расходы по месяцам</a>
+              <a href="{{ url_for('expense_rules') }}" class="{% if request.endpoint and 'expense_rule' in request.endpoint %}active{% endif %}">Правила расходов</a>
+            </div>
+          </details>
+
+          <details class="nav-group">
+            <summary class="{% if communications_active %}active{% endif %}">Коммуникации</summary>
+            <div class="nav-menu">
+              <a href="{{ url_for('calls') }}" class="{% if request.endpoint in ['calls', 'call_detail'] %}active{% endif %}">Обзвоны</a>
+              <a href="{{ url_for('telegram_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('telegram_') and not request.endpoint.startswith('telegram_receipt') %}active{% endif %}">Telegram<small>Привязки пользователей</small></a>
+              <a href="{{ url_for('telegram_receipts_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('telegram_receipt') %}active{% endif %}">Квитанции</a>
+              <a href="{{ url_for('community_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('community_') %}active{% endif %}">Сообщество</a>
+              <a href="{{ url_for('whatsapp_admin') }}" class="{% if request.endpoint and request.endpoint.startswith('whatsapp') %}active{% endif %}">WhatsApp</a>
+            </div>
+          </details>
         </nav>
       </div>
       {% block actions %}{% endblock %}
@@ -368,6 +463,25 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    const navigationGroups = Array.from(document.querySelectorAll('.nav-group'));
+    navigationGroups.forEach((group) => group.addEventListener('toggle', () => {
+      if (!group.open) return;
+      navigationGroups.forEach((candidate) => {
+        if (candidate !== group) candidate.open = false;
+      });
+    }));
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('nav')) {
+        navigationGroups.forEach((group) => { group.open = false; });
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        navigationGroups.forEach((group) => { group.open = false; });
+      }
+    });
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
