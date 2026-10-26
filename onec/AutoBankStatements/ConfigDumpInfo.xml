@@ -1,0 +1,40 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<ConfigDumpInfo xmlns="http://v8.1c.ru/8.3/xcf/dumpinfo" xmlns:xen="http://v8.1c.ru/8.3/xcf/enums" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" format="Hierarchical" version="2.20">
+	<ConfigVersions>
+		<Metadata name="CommonModule.ABSАвтозагрузкаБанковскихВыписок" id="50d42f0d-cbd2-4cb7-9a93-2f07270cd59c" configVersion="616c8d84691e6a195362fc79e4e4522b3174d303"/>
+		<Metadata name="CommonModule.ABSАвтозагрузкаБанковскихВыписок.Module" id="50d42f0d-cbd2-4cb7-9a93-2f07270cd59c.0" configVersion="331b8c810284130ab199a0132fad958013e1e3f5"/>
+		<Metadata name="CommonModule.ABSАвтозагрузкаРеестровПлатежей" id="3a4a3710-0ddf-4a3d-8305-7d1b12483c60" configVersion="d2e4367965a704aa63b186576451c862207d8dd1"/>
+		<Metadata name="CommonModule.ABSАвтозагрузкаРеестровПлатежей.Module" id="3a4a3710-0ddf-4a3d-8305-7d1b12483c60.0" configVersion="3b02f4833e08d4f1b431885a3b5217a6ea1fceb4"/>
+		<Metadata name="CommonModule.ABSВыгрузкаДанныхДляПриложения" id="33e03cb0-71b2-44f6-80cf-8e90ea68ca40" configVersion="c8f1995107fd9e2d97b12caa6e830217599828d8"/>
+		<Metadata name="CommonModule.ABSВыгрузкаДанныхДляПриложения.Module" id="33e03cb0-71b2-44f6-80cf-8e90ea68ca40.0" configVersion="de054631ca7d1fa30d6849d4f729cc0eab2208ac"/>
+		<Metadata name="CommonModule.ABSДолгиПоTelegram" id="ae915006-043d-4dd5-90f2-cca4204ff0ff" configVersion="4a22e611597e54b4853c35749c4b1459226e19f4"/>
+		<Metadata name="CommonModule.ABSДолгиПоTelegram.Module" id="ae915006-043d-4dd5-90f2-cca4204ff0ff.0" configVersion="56fa17e34d2048bcde4cf79bd5b9fe491c90f362"/>
+		<Metadata name="Configuration.AutoBankStatements" id="c0fdb588-c9fa-449c-8283-f520aeeed408" configVersion="d40d236c6ed69c6d72fe4e3c05dad162f593a864"/>
+		<Metadata name="HTTPService.ABSBankImport" id="ebeb7207-32b9-45ac-91e4-315e69f0f07c" configVersion="a46c74862fdfc05e61823518ce6a13d55af88392">
+			<Metadata name="HTTPService.ABSBankImport.URLTemplate.Run" id="4ec3acc5-6b52-4c39-b584-82eb7dd83e89"/>
+			<Metadata name="HTTPService.ABSBankImport.URLTemplate.Run.Method.Post" id="9cce0502-4186-45bc-95ee-f5de48de80c4"/>
+		</Metadata>
+		<Metadata name="HTTPService.ABSBankImport.Module" id="ebeb7207-32b9-45ac-91e4-315e69f0f07c.0" configVersion="423dc7a7fd63f53beae2de8fd551d0f6adffe490"/>
+		<Metadata name="HTTPService.ABSEcoparkSync" id="97380ede-8f32-46a5-a2a9-9df8e2932a8f" configVersion="f734789d32c3d255bb2a22f060ea386010252af9">
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Snapshot" id="013f7dc1-aec4-41fb-ba7e-8b1a75e2f726"/>
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Receipt" id="18308002-1faa-4f3c-b83e-03a7e2f55a01"/>
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Snapshot.Method.Get" id="20e60f36-7d17-4575-8818-6507fd8a4c47"/>
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Health" id="44ef1aa8-f3b8-41eb-81cf-6eb9919c740e"/>
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Health.Method.Get" id="a32cfe0b-f051-497b-99cb-510830b158ee"/>
+			<Metadata name="HTTPService.ABSEcoparkSync.URLTemplate.Receipt.Method.Get" id="b327d758-f263-47b2-ac5c-db82b0899112"/>
+		</Metadata>
+		<Metadata name="HTTPService.ABSEcoparkSync.Module" id="97380ede-8f32-46a5-a2a9-9df8e2932a8f.0" configVersion="65d5dd35a21846fb230103e5137d6e3979b88fb8"/>
+		<Metadata name="HTTPService.ABSRegistryImport" id="d6e62b7d-1782-449a-b9ed-e1b1c62f31b1" configVersion="86233ad5f2ee2e8d9a8b176110064c73e17f3c3d">
+			<Metadata name="HTTPService.ABSRegistryImport.URLTemplate.Run.Method.Post" id="42cc63cd-4caf-4817-99e4-4e39c40e72d7"/>
+			<Metadata name="HTTPService.ABSRegistryImport.URLTemplate.Run" id="569ff430-9bb7-4023-a830-93396f163e8f"/>
+		</Metadata>
+		<Metadata name="HTTPService.ABSRegistryImport.Module" id="d6e62b7d-1782-449a-b9ed-e1b1c62f31b1.0" configVersion="9aaf8b227675536c3fa18fcfb78b0661cb45650b"/>
+		<Metadata name="HTTPService.ABSTelegramDebt" id="e3e71e10-319d-4395-b1f2-5568bedab323" configVersion="c13cb01755ed65fdb7818603b011e2dda74c8b89">
+			<Metadata name="HTTPService.ABSTelegramDebt.URLTemplate.ByTelegram" id="4d14642c-f987-4588-9b83-64511272be6b"/>
+			<Metadata name="HTTPService.ABSTelegramDebt.URLTemplate.ByTelegram.Method.Get" id="e955e992-6723-4c23-a2f1-f9b4913bf00e"/>
+		</Metadata>
+		<Metadata name="HTTPService.ABSTelegramDebt.Module" id="e3e71e10-319d-4395-b1f2-5568bedab323.0" configVersion="ff8f0f39439e3765d139a37a123e7e407c1eb35e"/>
+		<Metadata name="Role.ОсновнаяРоль" id="6c5ea094-4099-495e-8e06-33ffb3ee330f" configVersion="cb13d940e09fdd4934d10d84182cf96cbcf13340"/>
+		<Metadata name="ScheduledJob.ABSЗагрузкаВыписокСбер" id="6a70767e-025a-4d03-b049-d5a5813e3f77" configVersion="3e7d1c0c8fa5773fe8130e83ba578f8a27cf53bf"/>
+	</ConfigVersions>
+</ConfigDumpInfo>

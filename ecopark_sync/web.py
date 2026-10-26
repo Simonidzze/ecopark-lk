@@ -58,6 +58,9 @@ from .models import (
     Plot,
     PretrialClaim,
     SyncRun,
+    TelegramBinding,
+    TelegramLinkRequest,
+    TelegramProfile,
     WhatsAppMessage,
 )
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
@@ -80,6 +83,8 @@ COUNT_MODELS = (
     ("owner_plots", "Владельцы участков", OwnerPlot),
     ("balances", "Остатки", Balance),
     ("messenger_bindings", "Мессенджеры", MessengerBinding),
+    ("telegram_bindings", "Telegram-привязки", TelegramBinding),
+    ("telegram_link_requests", "Заявки Telegram", TelegramLinkRequest),
     ("call_campaigns", "Обзвоны", CallCampaign),
     ("call_attempts", "Звонки", CallAttempt),
     ("payments", "Платежи", Payment),
@@ -804,6 +809,14 @@ def create_app():
             ensure_expense_schema()
         except Exception:
             app.logger.exception("Не удалось подготовить разнесение расходов")
+
+    if env("TELEGRAM_AUTO_INIT_SCHEMA", "false").lower() in {"1", "true", "yes", "y"}:
+        try:
+            from .schema import ensure_telegram_schema
+
+            ensure_telegram_schema()
+        except Exception:
+            app.logger.exception("Не удалось подготовить таблицы Telegram")
 
     @app.get("/")
     def index():
@@ -1871,6 +1884,183 @@ def create_app():
             db_error=db_error,
             connection_status=connection_status,
         )
+
+    @app.get("/admin/telegram")
+    def telegram_admin():
+        Session = make_session_factory()
+        with Session() as session:
+            requests_rows = session.scalars(
+                select(TelegramLinkRequest)
+                .order_by(
+                    (TelegramLinkRequest.status == "pending").desc(),
+                    TelegramLinkRequest.created_at.desc(),
+                    TelegramLinkRequest.id.desc(),
+                )
+                .limit(200)
+            ).all()
+            owner_plots = session.scalars(
+                select(OwnerPlot).order_by(OwnerPlot.owner, OwnerPlot.plot_number)
+            ).all()
+            bindings = session.scalars(
+                select(TelegramBinding)
+                .where(TelegramBinding.enabled.is_(True))
+                .order_by(TelegramBinding.owner, TelegramBinding.telegram_user_id)
+            ).all()
+
+        owner_plot_options = []
+        for owner_plot in owner_plots:
+            phone = normalize_phone(owner_plot.phone)
+            label = f"{owner_plot.owner} — участок {owner_plot.plot_number}"
+            if phone:
+                label += f" — +{phone}"
+            owner_plot_options.append({"row": owner_plot, "label": label})
+
+        suggestions = {}
+        for link_request in requests_rows:
+            best_id = None
+            best_score = 0
+            request_name = normalize_text(link_request.full_name)
+            request_plot = normalize_text(link_request.plot_number)
+            request_phone = normalize_phone(link_request.phone)
+            for option in owner_plot_options:
+                owner_plot = option["row"]
+                score = 0
+                if request_plot and request_plot == normalize_text(owner_plot.plot_number):
+                    score += 5
+                owner_name = normalize_text(owner_plot.owner)
+                if request_name and request_name == owner_name:
+                    score += 5
+                elif request_name and (request_name in owner_name or owner_name in request_name):
+                    score += 2
+                owner_phone = normalize_phone(owner_plot.phone)
+                if request_phone and owner_phone and request_phone == owner_phone:
+                    score += 4
+                if score > best_score:
+                    best_score = score
+                    best_id = owner_plot.id
+            suggestions[link_request.id] = best_id if best_score >= 5 else None
+
+        return render_template(
+            "telegram.html",
+            requests_rows=requests_rows,
+            owner_plot_options=owner_plot_options,
+            suggestions=suggestions,
+            bindings=bindings,
+        )
+
+    @app.post("/admin/telegram/requests/<int:request_id>/approve")
+    def telegram_approve(request_id):
+        owner_plot_id = request.form.get("owner_plot_id", "").strip()
+        Session = make_session_factory()
+        with Session() as session:
+            link_request = session.get(TelegramLinkRequest, request_id)
+            if link_request is None:
+                abort(404)
+            if link_request.status != "pending":
+                flash("Эта заявка уже обработана", "error")
+                return redirect(url_for("telegram_admin"))
+            owner_plot = session.get(OwnerPlot, owner_plot_id)
+            if owner_plot is None:
+                flash("Выберите владельца и участок для привязки", "error")
+                return redirect(url_for("telegram_admin"))
+
+            now = now_utc_naive()
+            binding = session.get(TelegramBinding, link_request.telegram_user_id)
+            if binding is None:
+                binding = TelegramBinding(
+                    telegram_user_id=link_request.telegram_user_id,
+                    chat_id=link_request.chat_id,
+                    owner_id=owner_plot.owner_id,
+                    owner=owner_plot.owner,
+                    request_id=link_request.id,
+                    enabled=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(binding)
+            else:
+                binding.chat_id = link_request.chat_id
+                binding.owner_id = owner_plot.owner_id
+                binding.owner = owner_plot.owner
+                binding.request_id = link_request.id
+                binding.enabled = True
+                binding.updated_at = now
+
+            link_request.status = "approved"
+            link_request.owner_id = owner_plot.owner_id
+            link_request.owner_plot_id = owner_plot.id
+            link_request.review_comment = request.form.get("review_comment", "").strip()[:4000]
+            link_request.reviewed_at = now
+            profile = session.get(TelegramProfile, link_request.telegram_user_id)
+            if profile is not None:
+                profile.state = "idle"
+                profile.updated_at = now
+            session.commit()
+
+        notification_error = None
+        telegram_token = env("TELEGRAM_BOT_TOKEN", "")
+        if telegram_token:
+            try:
+                from .telegram_bot import MENU_MARKUP, TelegramBotClient
+
+                TelegramBotClient(token=telegram_token).send_message(
+                    link_request.chat_id,
+                    "Заявка одобрена. Теперь задолженность доступна в меню.",
+                    MENU_MARKUP,
+                )
+            except Exception as exc:
+                app.logger.exception("Не удалось уведомить об одобрении Telegram-заявки")
+                notification_error = str(exc)
+
+        flash(
+            f"Telegram @{link_request.username or link_request.telegram_user_id} привязан к {owner_plot.owner}",
+            "success",
+        )
+        if notification_error:
+            flash(f"Привязка сохранена, но уведомить пользователя не удалось: {notification_error}", "error")
+        return redirect(url_for("telegram_admin"))
+
+    @app.post("/admin/telegram/requests/<int:request_id>/reject")
+    def telegram_reject(request_id):
+        Session = make_session_factory()
+        with Session() as session:
+            link_request = session.get(TelegramLinkRequest, request_id)
+            if link_request is None:
+                abort(404)
+            if link_request.status != "pending":
+                flash("Эта заявка уже обработана", "error")
+                return redirect(url_for("telegram_admin"))
+            now = now_utc_naive()
+            link_request.status = "rejected"
+            link_request.review_comment = request.form.get("review_comment", "").strip()[:4000]
+            link_request.reviewed_at = now
+            profile = session.get(TelegramProfile, link_request.telegram_user_id)
+            if profile is not None:
+                profile.state = "idle"
+                profile.updated_at = now
+            session.commit()
+
+        notification_error = None
+        telegram_token = env("TELEGRAM_BOT_TOKEN", "")
+        if telegram_token:
+            try:
+                from .telegram_bot import MENU_MARKUP, TelegramBotClient
+
+                reason = f"\nПричина: {link_request.review_comment}" if link_request.review_comment else ""
+                TelegramBotClient(token=telegram_token).send_message(
+                    link_request.chat_id,
+                    "Заявка на привязку отклонена. Отправьте /start, чтобы заполнить её заново."
+                    + reason,
+                    MENU_MARKUP,
+                )
+            except Exception as exc:
+                app.logger.exception("Не удалось уведомить об отклонении Telegram-заявки")
+                notification_error = str(exc)
+
+        flash("Заявка Telegram отклонена", "success")
+        if notification_error:
+            flash(f"Решение сохранено, но уведомить пользователя не удалось: {notification_error}", "error")
+        return redirect(url_for("telegram_admin"))
 
     @app.get("/admin/whatsapp/status")
     def whatsapp_status():

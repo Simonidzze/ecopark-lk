@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}Telegram — Ecopark LK Admin{% endblock %}
+
+{% block content %}
+  <section class="metrics">
+    <div class="metric">
+      <div class="label">Ожидают проверки</div>
+      <div class="value">{{ requests_rows | selectattr('status', 'equalto', 'pending') | list | length }}</div>
+    </div>
+    <div class="metric">
+      <div class="label">Активные привязки</div>
+      <div class="value">{{ bindings | length }}</div>
+    </div>
+  </section>
+
+  <section class="section" style="margin-bottom: 20px">
+    <div class="section-head">
+      <div>
+        <h2>Заявки на привязку Telegram</h2>
+        <div class="muted">Проверьте ФИО, участок и телефон, затем выберите запись владельца из выгрузки 1С.</div>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Дата</th>
+            <th>Telegram</th>
+            <th>Данные из заявки</th>
+            <th>Статус</th>
+            <th>Проверка</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in requests_rows %}
+            <tr>
+              <td style="white-space: nowrap">{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+              <td>
+                {% if item.username %}@{{ item.username }}<br>{% endif %}
+                <span class="muted">ID {{ item.telegram_user_id }}</span>
+              </td>
+              <td>
+                <strong>{{ item.full_name }}</strong><br>
+                Участок: {{ item.plot_number }}<br>
+                Телефон: +{{ item.phone }}
+              </td>
+              <td>
+                {% if item.status == 'pending' %}
+                  <span class="status">На проверке</span>
+                {% elif item.status == 'approved' %}
+                  <span class="status ok">Привязана</span>
+                {% else %}
+                  <span class="status error">Отклонена</span>
+                {% endif %}
+                {% if item.review_comment %}<div class="muted" style="margin-top: 6px">{{ item.review_comment }}</div>{% endif %}
+              </td>
+              <td style="min-width: 390px">
+                {% if item.status == 'pending' %}
+                  <form method="post" action="{{ url_for('telegram_approve', request_id=item.id) }}" class="toolbar" style="margin-bottom: 8px">
+                    <select class="input" name="owner_plot_id" required style="max-width: 520px">
+                      <option value="">Выберите владельца и участок</option>
+                      {% for option in owner_plot_options %}
+                        <option value="{{ option.row.id }}" {% if suggestions[item.id] == option.row.id %}selected{% endif %}>{{ option.label }}</option>
+                      {% endfor %}
+                    </select>
+                    <button class="button" type="submit">Привязать</button>
+                  </form>
+                  <form method="post" action="{{ url_for('telegram_reject', request_id=item.id) }}" class="toolbar">
+                    <input class="input" name="review_comment" placeholder="Причина отказа (необязательно)" maxlength="4000">
+                    <button class="button danger" type="submit">Отклонить</button>
+                  </form>
+                {% elif item.owner_plot_id %}
+                  <a href="{{ url_for('plot_detail', owner_plot_id=item.owner_plot_id) }}">Открыть выбранный участок</a>
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="5" class="muted">Заявок пока нет</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head"><h2>Активные привязки</h2></div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>Владелец</th><th>Telegram ID</th><th>Дата привязки</th></tr>
+        </thead>
+        <tbody>
+          {% for binding in bindings %}
+            <tr>
+              <td>{{ binding.owner }}</td>
+              <td>{{ binding.telegram_user_id }}</td>
+              <td>{{ binding.updated_at.strftime('%d.%m.%Y %H:%M') }}</td>
+            </tr>
+          {% else %}
+            <tr><td colspan="3" class="muted">Активных привязок пока нет</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

@@ -12,6 +12,7 @@ services:
       WHATSAPP_SERVICE_URL: http://whatsapp:3000
       WHATSAPP_AUTO_INIT_SCHEMA: "true"
       EXPENSE_AUTO_INIT_SCHEMA: "true"
+      TELEGRAM_AUTO_INIT_SCHEMA: "true"
     ports:
       - "8080:8080"
     volumes:
@@ -29,6 +30,17 @@ services:
     environment:
       TZ: Asia/Novosibirsk
       WHATSAPP_SERVICE_URL: http://whatsapp:3000
+
+  telegram-bot:
+    build: .
+    image: ecopark-lk:latest
+    restart: unless-stopped
+    command: ["python", "ecopark_sync.py", "--env-file", "/dev/null", "telegram-bot"]
+    env_file:
+      - env.prod
+    environment:
+      TZ: Asia/Novosibirsk
+      TELEGRAM_AUTO_INIT_SCHEMA: "true"
 
   whatsapp:
     build: ./whatsapp-service

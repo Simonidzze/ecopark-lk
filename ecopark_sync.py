@@ -40,6 +40,12 @@ def command_whatsapp_worker(_args):
     run_whatsapp_worker()
 
 
+def command_telegram_bot(_args):
+    from ecopark_sync.telegram_bot import run_telegram_bot
+
+    run_telegram_bot()
+
+
 def command_export_sheets(_args):
     from ecopark_sync.sheets import export_to_google_sheets
 
@@ -85,6 +91,11 @@ def build_parser():
         "whatsapp-worker", help="Process the WhatsApp delivery queue"
     )
     whatsapp_parser.set_defaults(func=command_whatsapp_worker)
+
+    telegram_parser = subparsers.add_parser(
+        "telegram-bot", help="Run the Telegram bot using long polling"
+    )
+    telegram_parser.set_defaults(func=command_telegram_bot)
 
     export_parser = subparsers.add_parser("export-sheets", help="Export current MySQL data to Google Sheets")
     export_parser.set_defaults(func=command_export_sheets)

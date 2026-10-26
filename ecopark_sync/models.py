@@ -116,6 +116,61 @@ class MessengerBinding(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class TelegramProfile(Base):
+    __tablename__ = "telegram_profiles"
+
+    telegram_user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    first_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    last_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="idle")
+    draft_full_name: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    draft_plot_number: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    draft_phone: Mapped[str] = mapped_column(String(32), nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class TelegramLinkRequest(Base):
+    __tablename__ = "telegram_link_requests"
+    __table_args__ = (
+        Index("idx_telegram_link_requests_status_created", "status", "created_at"),
+        Index("idx_telegram_link_requests_user", "telegram_user_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    username: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plot_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    owner_id: Mapped[Optional[str]] = mapped_column(String(64))
+    owner_plot_id: Mapped[Optional[str]] = mapped_column(String(64))
+    review_comment: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
+class TelegramBinding(Base):
+    __tablename__ = "telegram_bindings"
+    __table_args__ = (
+        Index("idx_telegram_bindings_owner_id", "owner_id"),
+        Index("idx_telegram_bindings_enabled", "enabled"),
+    )
+
+    telegram_user_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner: Mapped[str] = mapped_column(String(255), nullable=False)
+    request_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
 class CallCampaign(Base):
     __tablename__ = "call_campaigns"
     __table_args__ = (

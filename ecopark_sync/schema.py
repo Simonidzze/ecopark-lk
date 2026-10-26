@@ -14,6 +14,9 @@ from .models import (
     ExpenseAllocation,
     ExpenseAllocationRule,
     ExpenseBudgetCategory,
+    TelegramBinding,
+    TelegramLinkRequest,
+    TelegramProfile,
     WhatsAppMessage,
 )
 from .utils import now_utc_naive
@@ -31,6 +34,14 @@ def init_schema():
 def ensure_whatsapp_schema():
     """Create only the WhatsApp queue table without changing existing data."""
     WhatsAppMessage.__table__.create(get_engine(), checkfirst=True)
+
+
+def ensure_telegram_schema():
+    """Create local Telegram profiles, review requests and bindings."""
+    engine = get_engine()
+    TelegramProfile.__table__.create(engine, checkfirst=True)
+    TelegramLinkRequest.__table__.create(engine, checkfirst=True)
+    TelegramBinding.__table__.create(engine, checkfirst=True)
 
 
 def ensure_expense_schema():
