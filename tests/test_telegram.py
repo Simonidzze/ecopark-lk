@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from ecopark_sync.models import (
     Balance,
     Base,
+    BotSettings,
     OwnerPlot,
     TelegramBinding,
     TelegramLinkRequest,
@@ -28,10 +29,27 @@ from ecopark_sync.web import create_app
 class FakeTelegramClient:
     def __init__(self):
         self.messages = []
+        self.callback_answers = []
+        self.edits = []
 
     def send_message(self, chat_id, text, reply_markup=None):
         self.messages.append(
             {"chat_id": str(chat_id), "text": text, "reply_markup": reply_markup}
+        )
+
+    def answer_callback_query(self, callback_id, text=None, show_alert=False):
+        self.callback_answers.append(
+            {"id": callback_id, "text": text, "show_alert": show_alert}
+        )
+
+    def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
+        self.edits.append(
+            {
+                "chat_id": str(chat_id),
+                "message_id": message_id,
+                "text": text,
+                "reply_markup": reply_markup,
+            }
         )
 
 
@@ -116,6 +134,38 @@ class TelegramBotTest(unittest.TestCase):
             self.Session,
         )
 
+    def configure_telegram_admin(self):
+        now = datetime(2026, 10, 26, 11, 0)
+        with self.Session() as session:
+            session.add_all(
+                [
+                    BotSettings(
+                        id=1,
+                        telegram_token="",
+                        telegram_api_base_url="https://api.telegram.org/bot",
+                        request_timeout_seconds=30,
+                        send_existing_on_first_run=True,
+                        telegram_update_offset=0,
+                        telegram_link_admin_username="chairman",
+                        updated_at=now,
+                    ),
+                    TelegramProfile(
+                        telegram_user_id="999",
+                        chat_id="999",
+                        username="chairman",
+                        first_name="Администратор",
+                        last_name="",
+                        state="idle",
+                        draft_full_name="",
+                        draft_plot_number="",
+                        draft_phone="",
+                        created_at=now,
+                        updated_at=now,
+                    ),
+                ]
+            )
+            session.commit()
+
     def test_registration_flow_creates_pending_request(self):
         self.submit_request()
 
@@ -187,6 +237,99 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(request_row.status, "rejected")
         self.assertEqual(request_row.review_comment, "Данные не совпали")
         self.assertIsNone(binding)
+
+    def test_new_request_is_sent_to_configured_telegram_admin(self):
+        self.configure_telegram_admin()
+
+        self.submit_request()
+
+        admin_messages = [
+            message for message in self.client.messages if message["chat_id"] == "999"
+        ]
+        self.assertEqual(len(admin_messages), 1)
+        self.assertIn("Новая заявка на привязку Telegram", admin_messages[0]["text"])
+        self.assertIn("Иванов Иван Иванович", admin_messages[0]["text"])
+        buttons = admin_messages[0]["reply_markup"]["inline_keyboard"]
+        self.assertEqual(buttons[0][0]["text"], "✅ Одобрить")
+        self.assertEqual(buttons[1][0]["text"], "❌ Отклонить")
+
+    def test_admin_username_can_be_configured_in_lk(self):
+        self.configure_telegram_admin()
+
+        with patch("ecopark_sync.web.make_session_factory", return_value=self.Session):
+            response = create_app().test_client().post(
+                "/admin/telegram/settings",
+                data={"telegram_admin_username": "@NewChairman"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        with self.Session() as session:
+            settings = session.get(BotSettings, 1)
+        self.assertEqual(settings.telegram_link_admin_username, "newchairman")
+
+    def test_telegram_admin_can_approve_request_from_notification(self):
+        self.configure_telegram_admin()
+        self.submit_request()
+        with self.Session() as session:
+            request_id = session.scalar(select(TelegramLinkRequest.id))
+
+        handled = handle_update(
+            {
+                "callback_query": {
+                    "id": "callback-1",
+                    "from": {"id": 999, "username": "chairman"},
+                    "data": f"telegram-link:approve:{request_id}",
+                    "message": {
+                        "message_id": 77,
+                        "chat": {"id": 999, "type": "private"},
+                        "text": "Новая заявка на привязку Telegram",
+                    },
+                }
+            },
+            self.client,
+            self.Session,
+        )
+
+        self.assertTrue(handled)
+        with self.Session() as session:
+            request_row = session.get(TelegramLinkRequest, request_id)
+            binding = session.get(TelegramBinding, "12345")
+        self.assertEqual(request_row.status, "approved")
+        self.assertEqual(binding.owner_id, "owner-1")
+        self.assertIn("Одобрено", self.client.callback_answers[-1]["text"])
+        self.assertIn("✅ Одобрено", self.client.edits[-1]["text"])
+        self.assertEqual(self.client.edits[-1]["reply_markup"], {"inline_keyboard": []})
+        self.assertIn("Заявка одобрена", self.client.messages[-1]["text"])
+
+    def test_telegram_admin_can_reject_request_from_notification(self):
+        self.configure_telegram_admin()
+        self.submit_request()
+        with self.Session() as session:
+            request_id = session.scalar(select(TelegramLinkRequest.id))
+
+        handle_update(
+            {
+                "callback_query": {
+                    "id": "callback-2",
+                    "from": {"id": 999, "username": "chairman"},
+                    "data": f"telegram-link:reject:{request_id}",
+                    "message": {
+                        "message_id": 78,
+                        "chat": {"id": 999, "type": "private"},
+                        "text": "Новая заявка на привязку Telegram",
+                    },
+                }
+            },
+            self.client,
+            self.Session,
+        )
+
+        with self.Session() as session:
+            request_row = session.get(TelegramLinkRequest, request_id)
+            binding = session.get(TelegramBinding, "12345")
+        self.assertEqual(request_row.status, "rejected")
+        self.assertIsNone(binding)
+        self.assertIn("отклонена", self.client.messages[-1]["text"])
 
     def test_multiple_telegram_accounts_can_share_owner_and_all_plots(self):
         self.submit_request()

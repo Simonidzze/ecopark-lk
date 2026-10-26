@@ -15,6 +15,13 @@ from .models import (
     TelegramLinkRequest,
     TelegramProfile,
 )
+from .telegram_links import (
+    approve_telegram_link_request,
+    is_telegram_link_admin,
+    reject_telegram_link_request,
+    suggested_owner_plot,
+    telegram_link_admin_notification,
+)
 from .utils import now_utc_naive
 
 
@@ -141,8 +148,18 @@ class TelegramBotClient:
             )
         return result.get("result")
 
-    def answer_callback_query(self, callback_query_id):
-        return self.call("answerCallbackQuery", {"callback_query_id": callback_query_id})
+    def answer_callback_query(self, callback_query_id, text=None, show_alert=False):
+        payload = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+            payload["show_alert"] = bool(show_alert)
+        return self.call("answerCallbackQuery", payload)
+
+    def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
+        payload = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        return self.call("editMessageText", payload)
 
     def get_me(self):
         return self.call("getMe")
@@ -278,7 +295,104 @@ def submit_registration(session, profile, phone):
     return request_row
 
 
+def handle_telegram_link_callback(callback, client, session_factory=None):
+    data = str(callback.get("data") or "")
+    if not data.startswith("telegram-link:"):
+        return False
+    callback_id = str(callback.get("id") or "")
+    parts = data.split(":")
+    if len(parts) != 3 or parts[1] not in {"approve", "reject"}:
+        if callback_id:
+            client.answer_callback_query(callback_id, "Некорректная команда", True)
+        return True
+    try:
+        request_id = int(parts[2])
+    except ValueError:
+        if callback_id:
+            client.answer_callback_query(callback_id, "Некорректная заявка", True)
+        return True
+
+    Session = session_factory or make_session_factory()
+    status_text = ""
+    requester_chat_id = None
+    requester_message = None
+    with Session() as session:
+        if not is_telegram_link_admin(session, callback.get("from") or {}):
+            if callback_id:
+                client.answer_callback_query(callback_id, "Недостаточно прав", True)
+            return True
+        link_request = session.get(TelegramLinkRequest, request_id)
+        if link_request is None:
+            if callback_id:
+                client.answer_callback_query(callback_id, "Заявка не найдена", True)
+            return True
+        if link_request.status != "pending":
+            label = "одобрена" if link_request.status == "approved" else "отклонена"
+            if callback_id:
+                client.answer_callback_query(callback_id, f"Заявка уже {label}", True)
+            return True
+
+        requester_chat_id = link_request.chat_id
+        if parts[1] == "approve":
+            owner_plot = suggested_owner_plot(session, link_request)
+            if owner_plot is None:
+                if callback_id:
+                    client.answer_callback_query(
+                        callback_id,
+                        "Владелец не найден. Обработайте заявку в ЛК.",
+                        True,
+                    )
+                return True
+            approve_telegram_link_request(session, link_request, owner_plot)
+            status_text = f"✅ Одобрено: {owner_plot.owner}, все участки владельца"
+            requester_message = (
+                "Заявка одобрена. Теперь в меню доступны задолженность и "
+                "квитанции по всем вашим участкам."
+            )
+        else:
+            reject_telegram_link_request(
+                session, link_request, "Отклонено администратором в Telegram"
+            )
+            status_text = "❌ Заявка отклонена"
+            requester_message = (
+                "Заявка на привязку отклонена администратором. "
+                "Проверьте введённые данные и обратитесь в правление ТСН."
+            )
+        session.commit()
+
+    if callback_id:
+        try:
+            client.answer_callback_query(callback_id, status_text)
+        except Exception:
+            LOGGER.exception("Failed to answer Telegram link callback %s", callback_id)
+    callback_message = callback.get("message") or {}
+    callback_chat = callback_message.get("chat") or {}
+    if callback_chat.get("id") is not None and callback_message.get("message_id") is not None:
+        original_text = str(callback_message.get("text") or "Заявка на привязку Telegram")
+        try:
+            client.edit_message_text(
+                callback_chat["id"],
+                callback_message["message_id"],
+                f"{original_text}\n\n{status_text}",
+                {"inline_keyboard": []},
+            )
+        except Exception:
+            LOGGER.exception("Failed to update Telegram link request notification")
+    if requester_chat_id and requester_message:
+        try:
+            client.send_message(requester_chat_id, requester_message, MENU_MARKUP)
+        except Exception:
+            LOGGER.exception("Failed to notify Telegram link requester")
+    return True
+
+
 def handle_update(update, client, session_factory=None, bot_user_id=None):
+    callback = update.get("callback_query")
+    if isinstance(callback, dict) and handle_telegram_link_callback(
+        callback, client, session_factory=session_factory
+    ):
+        return True
+
     message = update.get("message") or {}
     chat_type = (message.get("chat") or {}).get("type")
     is_private_message = bool(message) and chat_type in {None, "private"}
@@ -314,6 +428,15 @@ def handle_update(update, client, session_factory=None, bot_user_id=None):
             return True
 
         if command == "/start":
+            if is_telegram_link_admin(session, message.get("from") or {}):
+                session.commit()
+                client.send_message(
+                    profile.chat_id,
+                    "Аккаунт администратора подключён. Новые заявки на привязку "
+                    "будут приходить в этот чат.",
+                    MENU_MARKUP if binding is not None else REMOVE_KEYBOARD,
+                )
+                return True
             if binding is not None:
                 session.commit()
                 client.send_message(
@@ -417,6 +540,16 @@ def handle_update(update, client, session_factory=None, bot_user_id=None):
                 return True
             request_row = submit_registration(session, profile, phone)
             session.commit()
+            admin_notification = telegram_link_admin_notification(session, request_row)
+            if admin_notification is not None:
+                admin_chat_id, admin_text, admin_markup = admin_notification
+                try:
+                    client.send_message(admin_chat_id, admin_text, admin_markup)
+                except Exception:
+                    LOGGER.exception(
+                        "Failed to notify Telegram administrator about link request %s",
+                        request_row.id,
+                    )
             client.send_message(
                 profile.chat_id,
                 "Заявка отправлена администратору.\n\n"

@@ -7,6 +7,35 @@
 {% endblock %}
 
 {% block content %}
+  <section class="section" style="margin-bottom: 20px">
+    <div class="section-head">
+      <div>
+        <h2>Оповещения администратора</h2>
+        <div class="muted">Новые заявки будут приходить в личный чат с ботом, где их можно одобрить или отклонить.</div>
+      </div>
+    </div>
+    <form class="form-body" method="post" action="{{ url_for('telegram_settings') }}">
+      <div class="form-grid">
+        <label class="field">Telegram-логин администратора
+          <input class="input" name="telegram_admin_username" value="{{ telegram_admin_username }}" placeholder="username без @">
+        </label>
+        <div class="field">
+          <span>Состояние</span>
+          {% if telegram_admin_username and telegram_admin_profile %}
+            <strong style="color: var(--success)">Подключён: @{{ telegram_admin_username }}</strong>
+          {% elif telegram_admin_username %}
+            <span class="muted">Ожидается запуск бота аккаунтом @{{ telegram_admin_username }}</span>
+          {% else %}
+            <span class="muted">Оповещения отключены</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="toolbar" style="margin-top: 14px">
+        <button class="button" type="submit">Сохранить</button>
+      </div>
+    </form>
+  </section>
+
   <section class="metrics">
     <div class="metric">
       <div class="label">Ожидают проверки</div>

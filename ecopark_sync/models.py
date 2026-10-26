@@ -465,6 +465,9 @@ class BotSettings(Base):
     request_timeout_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=30)
     send_existing_on_first_run: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     telegram_update_offset: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    telegram_link_admin_username: Mapped[str] = mapped_column(
+        String(255), nullable=False, default=""
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 

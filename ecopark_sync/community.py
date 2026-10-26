@@ -44,6 +44,7 @@ def seed_community_defaults(session):
             request_timeout_seconds=int(env("TELEGRAM_REQUEST_TIMEOUT_SECONDS", "60")),
             send_existing_on_first_run=True,
             telegram_update_offset=0,
+            telegram_link_admin_username="",
             updated_at=now,
         )
         session.add(settings)

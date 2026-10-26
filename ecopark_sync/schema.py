@@ -74,6 +74,24 @@ def ensure_community_schema():
         NotificationDelivery.__table__,
     ):
         table.create(engine, checkfirst=True)
+    columns = {column["name"] for column in inspect(engine).get_columns("bot_settings")}
+    if "telegram_link_admin_username" not in columns:
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(
+                        "ALTER TABLE bot_settings ADD COLUMN "
+                        "telegram_link_admin_username VARCHAR(255) NOT NULL DEFAULT ''"
+                    )
+                )
+        except Exception:
+            # Web and bot containers can start this idempotent upgrade concurrently.
+            current_columns = {
+                column["name"]
+                for column in inspect(engine).get_columns("bot_settings")
+            }
+            if "telegram_link_admin_username" not in current_columns:
+                raise
 
 
 def ensure_expense_schema():

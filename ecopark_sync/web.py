@@ -45,6 +45,7 @@ from .expense_report import (
 from .models import (
     Accrual,
     Balance,
+    BotSettings,
     CallAttempt,
     CallCampaign,
     Expense,
@@ -60,8 +61,13 @@ from .models import (
     SyncRun,
     TelegramBinding,
     TelegramLinkRequest,
-    TelegramProfile,
     WhatsAppMessage,
+)
+from .telegram_links import (
+    approve_telegram_link_request,
+    find_telegram_link_admin_profile,
+    reject_telegram_link_request,
+    validate_telegram_username,
 )
 from .payment_report import XLSX_CONTENT_TYPE, load_payment_status_report, render_payment_status_xlsx
 from .utils import now_utc_naive
@@ -1894,6 +1900,11 @@ def create_app():
     def telegram_admin():
         Session = make_session_factory()
         with Session() as session:
+            settings = session.get(BotSettings, 1)
+            telegram_admin_username = (
+                settings.telegram_link_admin_username if settings is not None else ""
+            )
+            telegram_admin_profile = find_telegram_link_admin_profile(session)
             requests_rows = session.scalars(
                 select(TelegramLinkRequest)
                 .order_by(
@@ -1951,7 +1962,43 @@ def create_app():
             owner_plot_options=owner_plot_options,
             suggestions=suggestions,
             bindings=bindings,
+            telegram_admin_username=telegram_admin_username,
+            telegram_admin_profile=telegram_admin_profile,
         )
+
+    @app.post("/admin/telegram/settings")
+    def telegram_settings():
+        try:
+            username = validate_telegram_username(
+                request.form.get("telegram_admin_username", "")
+            )
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("telegram_admin"))
+
+        Session = make_session_factory()
+        with Session() as session:
+            settings = session.get(BotSettings, 1)
+            if settings is None:
+                from .community import seed_community_defaults
+
+                settings = seed_community_defaults(session)
+            settings.telegram_link_admin_username = username
+            settings.updated_at = now_utc_naive()
+            session.commit()
+            admin_profile = find_telegram_link_admin_profile(session)
+
+        if not username:
+            flash("Оповещения о заявках в Telegram отключены", "success")
+        elif admin_profile is None:
+            flash(
+                f"Логин @{username} сохранён. Откройте бота с этого аккаунта "
+                "и нажмите «Старт», чтобы он запомнил чат.",
+                "error",
+            )
+        else:
+            flash(f"Оповещения о заявках будут приходить @{username}", "success")
+        return redirect(url_for("telegram_admin"))
 
     @app.post("/admin/telegram/requests/<int:request_id>/approve")
     def telegram_approve(request_id):
@@ -1969,37 +2016,8 @@ def create_app():
                 flash("Выберите владельца и участок для привязки", "error")
                 return redirect(url_for("telegram_admin"))
 
-            now = now_utc_naive()
-            binding = session.get(TelegramBinding, link_request.telegram_user_id)
-            if binding is None:
-                binding = TelegramBinding(
-                    telegram_user_id=link_request.telegram_user_id,
-                    chat_id=link_request.chat_id,
-                    owner_id=owner_plot.owner_id,
-                    owner=owner_plot.owner,
-                    request_id=link_request.id,
-                    enabled=True,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(binding)
-            else:
-                binding.chat_id = link_request.chat_id
-                binding.owner_id = owner_plot.owner_id
-                binding.owner = owner_plot.owner
-                binding.request_id = link_request.id
-                binding.enabled = True
-                binding.updated_at = now
-
-            link_request.status = "approved"
-            link_request.owner_id = owner_plot.owner_id
-            link_request.owner_plot_id = owner_plot.id
+            approve_telegram_link_request(session, link_request, owner_plot)
             link_request.review_comment = request.form.get("review_comment", "").strip()[:4000]
-            link_request.reviewed_at = now
-            profile = session.get(TelegramProfile, link_request.telegram_user_id)
-            if profile is not None:
-                profile.state = "idle"
-                profile.updated_at = now
             session.commit()
 
         notification_error = None
@@ -2037,14 +2055,11 @@ def create_app():
             if link_request.status != "pending":
                 flash("Эта заявка уже обработана", "error")
                 return redirect(url_for("telegram_admin"))
-            now = now_utc_naive()
-            link_request.status = "rejected"
-            link_request.review_comment = request.form.get("review_comment", "").strip()[:4000]
-            link_request.reviewed_at = now
-            profile = session.get(TelegramProfile, link_request.telegram_user_id)
-            if profile is not None:
-                profile.state = "idle"
-                profile.updated_at = now
+            reject_telegram_link_request(
+                session,
+                link_request,
+                request.form.get("review_comment", ""),
+            )
             session.commit()
 
         notification_error = None
