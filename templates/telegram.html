@@ -2,6 +2,10 @@
 
 {% block title %}Telegram — Ecopark LK Admin{% endblock %}
 
+{% block actions %}
+  <a class="button" href="{{ url_for('telegram_receipts_admin') }}">Рассылка квитанций</a>
+{% endblock %}
+
 {% block content %}
   <section class="metrics">
     <div class="metric">

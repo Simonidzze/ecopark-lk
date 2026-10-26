@@ -52,6 +52,12 @@ def command_outage_worker(_args):
     run_outage_worker()
 
 
+def command_telegram_receipt_worker(_args):
+    from ecopark_sync.telegram_receipts import run_telegram_receipt_worker
+
+    run_telegram_receipt_worker()
+
+
 def command_export_sheets(_args):
     from ecopark_sync.sheets import export_to_google_sheets
 
@@ -107,6 +113,11 @@ def build_parser():
         "outage-worker", help="Check outage sources and send Telegram notifications"
     )
     outage_parser.set_defaults(func=command_outage_worker)
+
+    receipt_worker_parser = subparsers.add_parser(
+        "telegram-receipt-worker", help="Send queued receipt PDFs through Telegram"
+    )
+    receipt_worker_parser.set_defaults(func=command_telegram_receipt_worker)
 
     export_parser = subparsers.add_parser("export-sheets", help="Export current MySQL data to Google Sheets")
     export_parser.set_defaults(func=command_export_sheets)

@@ -28,6 +28,7 @@ from .models import (
     TelegramBinding,
     TelegramLinkRequest,
     TelegramProfile,
+    TelegramReceiptDelivery,
     WhatsAppMessage,
 )
 from .utils import now_utc_naive
@@ -48,11 +49,12 @@ def ensure_whatsapp_schema():
 
 
 def ensure_telegram_schema():
-    """Create local Telegram profiles, review requests and bindings."""
+    """Create local Telegram profiles, review requests, bindings and delivery queue."""
     engine = get_engine()
     TelegramProfile.__table__.create(engine, checkfirst=True)
     TelegramLinkRequest.__table__.create(engine, checkfirst=True)
     TelegramBinding.__table__.create(engine, checkfirst=True)
+    TelegramReceiptDelivery.__table__.create(engine, checkfirst=True)
 
 
 def ensure_community_schema():

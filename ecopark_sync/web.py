@@ -2123,8 +2123,10 @@ def create_app():
         app.extensions["ecopark_sync_scheduler"] = scheduler
 
     from .community_web import register_community_routes
+    from .telegram_receipt_web import register_telegram_receipt_routes
 
     register_community_routes(app)
+    register_telegram_receipt_routes(app)
 
     return app
 

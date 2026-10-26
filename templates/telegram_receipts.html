@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}Рассылка квитанций — Ecopark LK Admin{% endblock %}
+
+{% block actions %}
+  <div class="toolbar">
+    <a class="button secondary" href="{{ url_for('telegram_admin') }}">Привязки Telegram</a>
+    <a class="button secondary" href="{{ url_for('telegram_receipts_admin', scope='debt') }}">Только к оплате</a>
+    <a class="button secondary" href="{{ url_for('telegram_receipts_admin', scope='all') }}">Все привязанные</a>
+  </div>
+{% endblock %}
+
+{% block content %}
+  <section class="metrics metrics-six">
+    <div class="metric"><div class="label">Привязанных владельцев</div><div class="value">{{ bound_owners }}</div></div>
+    <div class="metric"><div class="label">Получателей в выборке</div><div class="value">{{ recipients|length }}</div></div>
+    <div class="metric"><div class="label">В очереди</div><div class="value">{{ stats.get('queued', 0) }}</div></div>
+    <div class="metric"><div class="label">Отправлено</div><div class="value">{{ stats.get('sent', 0) }}</div></div>
+    <div class="metric"><div class="label">Ошибки</div><div class="value">{{ stats.get('failed', 0) }}</div></div>
+  </section>
+
+  <section class="section" style="margin-bottom: 20px">
+    <div class="section-head">
+      <div>
+        <h2>Новая рассылка квитанций</h2>
+        <div class="muted">PDF формируется штатной печатной формой 1С непосредственно перед отправкой.</div>
+      </div>
+    </div>
+    <form method="post" action="{{ url_for('telegram_receipts_queue') }}">
+      <input type="hidden" name="scope" value="{{ scope }}">
+      <div class="form-body">
+        <label class="field field-wide">
+          <span>Подпись к PDF</span>
+          <textarea class="input" name="message_template" rows="7" maxlength="1024" required>{{ message_template }}</textarea>
+          <span>Доступные поля: {owner}, {plot_number}, {total}, {date}.</span>
+        </label>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th><input id="select-all-receipts" type="checkbox" aria-label="Выбрать всех"></th>
+              <th>Собственник</th>
+              <th>Участок</th>
+              <th>Telegram</th>
+              <th class="num">К оплате</th>
+              <th>Квитанция</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in recipients %}
+              <tr>
+                <td><input class="receipt-recipient" type="checkbox" name="recipient" value="{{ item.key }}"></td>
+                <td>{{ item.owner_plot.owner }}</td>
+                <td>{{ item.owner_plot.plot_number }}</td>
+                <td>
+                  {% if item.binding.telegram_user_id %}ID {{ item.binding.telegram_user_id }}{% endif %}
+                </td>
+                <td class="num">{{ item.total_text }}</td>
+                <td>
+                  <a href="{{ url_for('telegram_receipt_preview', owner_plot_id=item.owner_plot.id) }}" target="_blank">Открыть PDF</a>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td colspan="6" class="muted">Нет получателей для выбранного режима</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="form-body">
+        <label class="field field-wide" style="display: flex; grid-template-columns: auto 1fr; align-items: center;">
+          <input type="checkbox" name="confirm" value="yes" required>
+          <span>Подтверждаю постановку выбранных квитанций в очередь Telegram</span>
+        </label>
+        <div class="field-wide">
+          <button class="button" type="submit">Поставить выбранные квитанции в очередь</button>
+        </div>
+      </div>
+    </form>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <div>
+        <h2>История отправки</h2>
+        {% if batch_id %}<div class="muted">Показана партия {{ batch_id }}</div>{% endif %}
+      </div>
+      {% if batch_id %}<a class="button secondary" href="{{ url_for('telegram_receipts_admin', scope=scope) }}">Показать все</a>{% endif %}
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Дата</th><th>Собственник</th><th>Участок</th><th>Статус</th><th>Попытки</th><th>Ошибка</th><th></th></tr></thead>
+        <tbody>
+          {% for item in deliveries %}
+            <tr>
+              <td style="white-space: nowrap">{{ item.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+              <td>{{ item.owner_name }}</td>
+              <td>{{ item.plot_number }}</td>
+              <td>
+                {% if item.status == 'sent' %}<span class="status ok">Отправлено</span>
+                {% elif item.status == 'failed' %}<span class="status error">Ошибка</span>
+                {% elif item.status == 'processing' %}<span class="status">Отправляется</span>
+                {% else %}<span class="status">В очереди</span>{% endif %}
+              </td>
+              <td>{{ item.attempts }}</td>
+              <td class="muted">{{ item.error_text or '—' }}</td>
+              <td>
+                {% if item.status == 'failed' %}
+                  <form method="post" action="{{ url_for('telegram_receipt_retry', delivery_id=item.id) }}">
+                    <input type="hidden" name="batch_id" value="{{ batch_id }}">
+                    <button class="button secondary" type="submit">Повторить</button>
+                  </form>
+                {% endif %}
+              </td>
+            </tr>
+          {% else %}
+            <tr><td colspan="7" class="muted">Отправок пока нет</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    const selectAll = document.getElementById('select-all-receipts');
+    const recipients = Array.from(document.querySelectorAll('.receipt-recipient'));
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        recipients.forEach((item) => { item.checked = selectAll.checked; });
+      });
+      recipients.forEach((item) => item.addEventListener('change', () => {
+        selectAll.checked = recipients.length > 0 && recipients.every((candidate) => candidate.checked);
+      }));
+    }
+  </script>
+{% endblock %}

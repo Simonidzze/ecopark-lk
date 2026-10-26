@@ -13,8 +13,9 @@ from ecopark_sync.models import (
     TelegramBinding,
     TelegramLinkRequest,
     TelegramProfile,
+    TelegramReceiptDelivery,
 )
-from ecopark_sync.telegram_bot import DEBT_BUTTON, handle_update
+from ecopark_sync.telegram_bot import DEBT_BUTTON, MENU_MARKUP, RECEIPT_BUTTON, handle_update
 from ecopark_sync.web import create_app
 
 
@@ -26,6 +27,14 @@ class FakeTelegramClient:
         self.messages.append(
             {"chat_id": str(chat_id), "text": text, "reply_markup": reply_markup}
         )
+
+
+class ConfigureTelegramClient:
+    def __init__(self):
+        self.calls = []
+
+    def call(self, method, payload=None, timeout=None):
+        self.calls.append((method, payload, timeout))
 
 
 def update(text=None, *, contact=None, user_id=12345):
@@ -115,6 +124,16 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(request_row.phone, "79990000000")
         self.assertIn("Заявка отправлена администратору", self.client.messages[-1]["text"])
 
+    def test_bot_configuration_removes_public_command_list(self):
+        from ecopark_sync.telegram_bot import TelegramBotClient
+
+        client = ConfigureTelegramClient()
+        TelegramBotClient.configure(client)
+
+        self.assertEqual(client.calls[0][0], "deleteWebhook")
+        self.assertEqual(client.calls[1][0], "deleteMyCommands")
+        self.assertNotIn("setMyCommands", [method for method, _payload, _timeout in client.calls])
+
     def test_admin_approval_enables_local_debt_lookup(self):
         self.submit_request()
         with self.Session() as session:
@@ -162,6 +181,42 @@ class TelegramBotTest(unittest.TestCase):
         self.assertEqual(request_row.status, "rejected")
         self.assertEqual(request_row.review_comment, "Данные не совпали")
         self.assertIsNone(binding)
+
+    def test_receipt_menu_button_queues_onec_pdf_delivery(self):
+        now = datetime(2026, 10, 26, 12, 30)
+        with self.Session() as session:
+            session.add(
+                TelegramBinding(
+                    telegram_user_id="12345",
+                    chat_id="12345",
+                    owner_id="owner-1",
+                    owner="Иванов Иван Иванович",
+                    request_id=1,
+                    enabled=True,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.commit()
+
+        handle_update(update(RECEIPT_BUTTON), self.client, self.Session)
+
+        with self.Session() as session:
+            deliveries = session.scalars(select(TelegramReceiptDelivery)).all()
+        self.assertEqual(len(deliveries), 1)
+        self.assertEqual(deliveries[0].owner_plot_id, "owner-plot-1")
+        self.assertEqual(deliveries[0].status, "queued")
+        self.assertIn("скоро придёт", self.client.messages[-1]["text"])
+        self.assertEqual(
+            [button["text"] for button in MENU_MARKUP["keyboard"][0]],
+            [DEBT_BUTTON, RECEIPT_BUTTON],
+        )
+
+        handle_update(update(RECEIPT_BUTTON), self.client, self.Session)
+        with self.Session() as session:
+            deliveries = session.scalars(select(TelegramReceiptDelivery)).all()
+        self.assertEqual(len(deliveries), 1)
+        self.assertIn("уже ожидает", self.client.messages[-1]["text"])
 
 
 if __name__ == "__main__":

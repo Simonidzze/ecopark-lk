@@ -20,8 +20,9 @@ from .utils import now_utc_naive
 
 LOGGER = logging.getLogger(__name__)
 DEBT_BUTTON = "Узнать задолженность"
+RECEIPT_BUTTON = "Получить квитанцию"
 MENU_MARKUP = {
-    "keyboard": [[{"text": DEBT_BUTTON}]],
+    "keyboard": [[{"text": DEBT_BUTTON}, {"text": RECEIPT_BUTTON}]],
     "resize_keyboard": True,
     "is_persistent": True,
 }
@@ -75,18 +76,7 @@ class TelegramBotClient:
 
     def configure(self):
         self.call("deleteWebhook", {"drop_pending_updates": False})
-        self.call(
-            "setMyCommands",
-            {
-                "commands": [
-                    {"command": "start", "description": "Открыть меню"},
-                    {"command": "debt", "description": DEBT_BUTTON},
-                    {"command": "contacts", "description": "Полезные контакты"},
-                    {"command": "rating", "description": "Рейтинг соседей"},
-                    {"command": "me", "description": "Моя репутация"},
-                ]
-            },
-        )
+        self.call("deleteMyCommands")
 
     def get_updates(self, offset=None, poll_timeout=30):
         payload = {
@@ -121,6 +111,35 @@ class TelegramBotClient:
             payload["parse_mode"] = parse_mode
             payload["link_preview_options"] = {"is_disabled": True}
         return self.call("sendMessage", payload)
+
+    def send_document(self, chat_id, filename, document, caption=""):
+        if hasattr(document, "read"):
+            document.seek(0)
+            contents = document.read()
+        else:
+            contents = bytes(document)
+        try:
+            response = self.session.post(
+                f"{self.base_url}/sendDocument",
+                data={"chat_id": str(chat_id), "caption": str(caption or "")},
+                files={"document": (filename, contents, "application/pdf")},
+                timeout=self.timeout,
+            )
+        except requests.RequestException as exc:
+            raise TelegramAPIError(
+                f"Telegram API недоступен ({type(exc).__name__})"
+            ) from exc
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise TelegramAPIError(
+                f"Telegram API вернул некорректный ответ (HTTP {response.status_code})"
+            ) from exc
+        if not response.ok or not result.get("ok"):
+            raise TelegramAPIError(
+                result.get("description") or f"Ошибка Telegram API: HTTP {response.status_code}"
+            )
+        return result.get("result")
 
     def answer_callback_query(self, callback_query_id):
         return self.call("answerCallbackQuery", {"callback_query_id": callback_query_id})
@@ -327,6 +346,37 @@ def handle_update(update, client, session_factory=None, bot_user_id=None):
             client.send_message(profile.chat_id, response_text, MENU_MARKUP)
             return True
 
+        if text.casefold() == RECEIPT_BUTTON.casefold():
+            if binding is None:
+                if pending_request(session, profile.telegram_user_id) is not None:
+                    response_text = "Ваша заявка на привязку ещё проверяется администратором."
+                else:
+                    response_text = (
+                        "Telegram пока не привязан к владельцу. "
+                        "Отправьте /start, чтобы подать заявку."
+                    )
+            else:
+                from .telegram_receipts import enqueue_user_receipts
+
+                queued, skipped = enqueue_user_receipts(session, binding)
+                if queued == 1:
+                    response_text = "Квитанция поставлена в очередь и скоро придёт в этот чат."
+                elif queued > 1:
+                    response_text = (
+                        f"Квитанции по вашим участкам ({queued}) поставлены в очередь "
+                        "и скоро придут в этот чат."
+                    )
+                elif skipped:
+                    response_text = "Квитанция уже ожидает отправки."
+                else:
+                    response_text = (
+                        "Привязка найдена, но участки владельца отсутствуют "
+                        "в последней выгрузке."
+                    )
+            session.commit()
+            client.send_message(profile.chat_id, response_text, MENU_MARKUP)
+            return True
+
         if profile.state == "awaiting_full_name":
             if len(text) < 5 or len(text) > 255:
                 session.commit()
@@ -373,7 +423,7 @@ def handle_update(update, client, session_factory=None, bot_user_id=None):
                 f"ФИО: {request_row.full_name}\n"
                 f"Участок: {request_row.plot_number}\n"
                 f"Телефон: +{request_row.phone}\n\n"
-                "После проверки вы сможете узнать задолженность в меню.",
+                "После проверки вы сможете узнать задолженность и получить квитанцию в меню.",
                 MENU_MARKUP,
             )
             return True

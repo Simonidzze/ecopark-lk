@@ -42,6 +42,17 @@ services:
       TZ: Asia/Novosibirsk
       TELEGRAM_AUTO_INIT_SCHEMA: "true"
 
+  telegram-receipt-worker:
+    build: .
+    image: ecopark-lk:latest
+    restart: unless-stopped
+    command: ["python", "ecopark_sync.py", "--env-file", "/dev/null", "telegram-receipt-worker"]
+    env_file:
+      - env.prod
+    environment:
+      TZ: Asia/Novosibirsk
+      TELEGRAM_AUTO_INIT_SCHEMA: "true"
+
   outage-worker:
     build: .
     image: ecopark-lk:latest

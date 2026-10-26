@@ -184,6 +184,32 @@ class TelegramBinding(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class TelegramReceiptDelivery(Base):
+    __tablename__ = "telegram_receipt_deliveries"
+    __table_args__ = (
+        Index("idx_telegram_receipt_status_created", "status", "created_at"),
+        Index("idx_telegram_receipt_batch_id", "batch_id"),
+        Index("idx_telegram_receipt_owner_plot_id", "owner_plot_id"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    batch_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    telegram_user_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    chat_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_plot_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    owner_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    plot_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    message_text: Mapped[str] = mapped_column(Text, nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    external_message_id: Mapped[Optional[str]] = mapped_column(String(255))
+    error_text: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+
 class CallCampaign(Base):
     __tablename__ = "call_campaigns"
     __table_args__ = (
